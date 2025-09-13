@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200">
+  <!-- Background -->
+  <rect x="0" y="0" width="400" height="200" fill="#f8f9fa" stroke="none"/>
+
+  <!-- Title -->
+  <text x="200" y="20" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#333">
+    Many-to-One (Aggregation)
+  </text>
+
+  <!-- Sources -->
+  <rect x="70" y="50" width="80" height="40" rx="5" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="110" y="68" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#0d47a1">Accel</text>
+  <text x="110" y="82" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#0d47a1">Source</text>
+
+  <rect x="160" y="50" width="80" height="40" rx="5" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="200" y="68" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#0d47a1">Gyro</text>
+  <text x="200" y="82" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#0d47a1">Source</text>
+
+  <rect x="250" y="50" width="80" height="40" rx="5" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="290" y="68" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#0d47a1">Mag</text>
+  <text x="290" y="82" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#0d47a1">Source</text>
+
+  <!-- Sink -->
+  <rect x="160" y="130" width="80" height="40" rx="5" fill="#e8f5e8" stroke="#2e7d32" stroke-width="2"/>
+  <text x="200" y="148" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#1b5e20">Fusion</text>
+  <text x="200" y="162" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#1b5e20">Sink</text>
+
+  <!-- Arrows -->
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#333"/>
+    </marker>
+  </defs>
+
+  <path d="M 130 90 L 180 130" stroke="#333" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <path d="M 200 90 L 200 130" stroke="#333" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <path d="M 270 90 L 220 130" stroke="#333" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+</svg>

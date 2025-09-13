@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig PACKET_IO
+	bool "Packet I/O support"
+	select NET_BUF
+	help
+	  Enable the packet I/O subsystem. This provides a zero-copy
+	  mechanism for distributing net_buf packets from sources to
+	  multiple sinks using reference counting.
+
+if PACKET_IO
+
+config PACKET_IO_STATS
+	bool "Enable packet I/O statistics"
+	default y if DEBUG
+	help
+	  Enable statistics tracking for packet sources and sinks.
+	  This includes message counts, drop counts, and delivery counts.
+
+config PACKET_IO_LOG_LEVEL
+	int "Packet I/O log level"
+	depends on LOG
+	default 3
+	range 0 4
+	help
+	  Set the log level for packet I/O subsystem
+	  0 - OFF
+	  1 - ERROR  
+	  2 - WARNING
+	  3 - INFO
+	  4 - DEBUG
+
+config PACKET_IO_RUNTIME_OBSERVERS
+	bool "Runtime observer registration"
+	help
+	  Enable runtime registration and deregistration of observers.
+	  If disabled, all connections must be defined at compile time.
+
+config PACKET_IO_ASSERT_ON_ERROR
+	bool "Assert on packet I/O errors"
+	default y if DEBUG
+	help
+	  Assert when packet I/O encounters an error condition such as
+	  invalid parameters or corrupted state.
+
+config PACKET_IO_PRIORITY
+	int "Packet I/O initialization priority"
+	default 99
+	range 0 99
+	help
+	  Initialization priority for the packet I/O subsystem.
+	  Should be high (late) to ensure sources and sinks are defined.
+
+module = PACKET_IO
+module-str = packet_io
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # PACKET_IO

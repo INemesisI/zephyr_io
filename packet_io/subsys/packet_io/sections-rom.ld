@@ -1,0 +1,5 @@
+#include <zephyr/linker/iterable_sections.h>
+
+ITERABLE_SECTION_ROM(packet_connection, Z_LINK_ITERABLE_SUBALIGN)
+ITERABLE_SECTION_ROM(packet_source_ptr, Z_LINK_ITERABLE_SUBALIGN)
+ITERABLE_SECTION_ROM(packet_sink_ptr, Z_LINK_ITERABLE_SUBALIGN)

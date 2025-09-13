@@ -1,0 +1,144 @@
+name: Packet I/O Tests
+
+# Run tests on PRs, pushes to main, and can be triggered manually
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'packet_io/**'
+      - '.github/workflows/packet_io_tests.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packet_io/**'
+      - '.github/workflows/packet_io_tests.yml'
+  workflow_dispatch:
+
+# Cancel ongoing runs for PRs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+# Grant permissions for the workflow
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  packet_io_tests:
+    name: Run Packet I/O Tests
+    runs-on: ubuntu-latest
+    container:
+      image: zephyrprojectrtos/ci:v0.26.18
+      options: '--entrypoint /bin/bash'
+
+    steps:
+      - name: Checkout packet_io repository
+        uses: actions/checkout@v4
+        with:
+          path: 'packet_io'
+
+      - name: Checkout Zephyr 3.7.1
+        uses: actions/checkout@v4
+        with:
+          repository: 'zephyrproject-rtos/zephyr'
+          ref: 'v3.7.1'
+          path: 'zephyr'
+
+      - name: Setup minimal environment (native_sim only)
+        working-directory: zephyr
+        run: |
+          # For native_sim, we can skip most West modules entirely
+          # Just initialize without updating modules
+          west init -l . || echo "West init skipped"
+
+      - name: Install Python packages
+        run: |
+          apt-get update
+          apt-get install -y python3-venv python3-pip
+
+      - name: Setup Python Environment
+        working-directory: zephyr
+        shell: bash
+        run: |
+          # Create virtual environment
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+
+      - name: Setup Zephyr SDK Environment
+        run: |
+          # Find the actual SDK installation
+          echo "=== Checking SDK locations ==="
+          find /opt -name "*zephyr-sdk*" -type d 2>/dev/null || echo "No zephyr-sdk dirs found"
+          ls -la /opt/toolchains/ 2>/dev/null || echo "No /opt/toolchains"
+
+          # Look for SDK config files
+          echo "=== Looking for SDK config files ==="
+          find /opt -name "*zephyr-sdk*config.cmake" 2>/dev/null || echo "No config files found"
+          find /opt -name "Zephyr-sdkConfig.cmake" 2>/dev/null || echo "No Zephyr-sdkConfig.cmake found"
+
+          # Set SDK path - try common locations
+          if [ -d "/opt/toolchains/zephyr-sdk-0.16.1" ]; then
+            SDK_PATH="/opt/toolchains/zephyr-sdk-0.16.1"
+          elif [ -d "/opt/toolchains/zephyr-sdk-0.16.0" ]; then
+            SDK_PATH="/opt/toolchains/zephyr-sdk-0.16.0"
+          else
+            SDK_PATH=$(find /opt -name "*zephyr-sdk*" -type d 2>/dev/null | head -1)
+          fi
+
+          echo "Setting ZEPHYR_SDK_INSTALL_DIR to: $SDK_PATH"
+          echo "ZEPHYR_SDK_INSTALL_DIR=$SDK_PATH" >> $GITHUB_ENV
+
+      - name: Setup Environment Variables
+        working-directory: zephyr
+        run: |
+          echo "ZEPHYR_BASE=${GITHUB_WORKSPACE}/zephyr" >> $GITHUB_ENV
+          echo "ZEPHYR_TOOLCHAIN_VARIANT=zephyr" >> $GITHUB_ENV
+          echo "ZEPHYR_EXTRA_MODULES=${GITHUB_WORKSPACE}/packet_io/packet_io" >> $GITHUB_ENV
+          echo "PYTHON_CMD=${GITHUB_WORKSPACE}/zephyr/.venv/bin/python3" >> $GITHUB_ENV
+          echo "PYTHON_PREFER=${GITHUB_WORKSPACE}/zephyr/.venv/bin/python3" >> $GITHUB_ENV
+          echo "CMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/zephyr/.venv" >> $GITHUB_ENV
+
+      - name: Run Packet I/O Tests with Twister
+        working-directory: zephyr
+        shell: bash
+        run: |
+          source .venv/bin/activate
+          export ZEPHYR_BASE=${GITHUB_WORKSPACE}/zephyr
+          export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
+          export ZEPHYR_EXTRA_MODULES=${GITHUB_WORKSPACE}/packet_io/packet_io
+          export PYTHON_PREFER=${PYTHON_CMD}
+          export CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}
+
+          # Run all packet_io tests and samples
+          python scripts/twister \
+            -T ../packet_io/packet_io \
+            -p native_sim \
+            -v \
+            --inline-logs \
+            --retry-failed 2 \
+            -O twister-out \
+            --no-clean
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Packet IO Test Results
+          if-no-files-found: ignore
+          path: |
+            zephyr/twister-out/twister.xml
+            zephyr/twister-out/twister.json
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          check_name: Packet I/O Test Results
+          files: "**/twister.xml"
+          comment_mode: off
