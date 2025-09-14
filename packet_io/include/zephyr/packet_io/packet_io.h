@@ -81,14 +81,24 @@ struct packet_sink_ptr {
 };
 
 /**
+ * @brief Declare a packet source
+ *
+ * This macro declares an extern reference to a packet source defined elsewhere.
+ *
+ * @param _name Name of the source variable
+ */
+#define PACKET_SOURCE_DECLARE(_name) extern struct packet_source _name
+
+/**
  * @brief Define a packet source
  *
- * This macro defines and initializes a packet source.
+ * This macro defines and initializes a packet source. The source is
+ * non-static so it can be referenced from other files.
  *
  * @param _name Name of the source variable
  */
 #define PACKET_SOURCE_DEFINE(_name)                                           \
-	static struct packet_source _name = {                                 \
+	struct packet_source _name = {                                        \
 		.sinks = SYS_DLIST_STATIC_INIT(&_name.sinks),                \
 		.lock = {},                                                   \
 		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
@@ -99,10 +109,19 @@ struct packet_sink_ptr {
 					      _name##_ptr) = { .ptr = &_name }
 
 /**
+ * @brief Declare a packet sink
+ *
+ * This macro declares an extern reference to a packet sink defined elsewhere.
+ *
+ * @param _name Name of the sink variable
+ */
+#define PACKET_SINK_DECLARE(_name) extern struct packet_sink _name
+
+/**
  * @brief Define a packet sink
  *
  * This macro defines and initializes a packet sink with an embedded
- * message queue.
+ * message queue. The sink is non-static so it can be referenced from other files.
  *
  * @param _name Name of the sink variable
  * @param _msg_count Maximum number of messages in the queue
@@ -111,7 +130,7 @@ struct packet_sink_ptr {
 #define PACKET_SINK_DEFINE(_name, _msg_count, _drop_on_full)                  \
 	static char __aligned(4)                                              \
 		_name##_buffer[(_msg_count) * sizeof(struct net_buf *)];      \
-	static struct packet_sink _name = {                                   \
+	struct packet_sink _name = {                                          \
 		.msgq = Z_MSGQ_INITIALIZER(_name.msgq, _name##_buffer,        \
 					    sizeof(struct net_buf *),         \
 					    _msg_count),                       \
