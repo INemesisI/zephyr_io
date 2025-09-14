@@ -1,17 +1,29 @@
 sample:
-  description: Packet I/O system demonstration with header addition and routing
+  description: Modular packet processing pipeline with header addition, TCP transmission, and integrity validation
   name: Packet I/O Basic Routing Sample
 tests:
   sample.packet_io.basic_routing:
     tags:
       - packet_io
       - samples
+      - networking
+      - validation
     harness: console
     harness_config:
       type: multi_line
       ordered: false
       regex:
         - "Packet I/O initialized with 4 connections"
-        - "TCP TX: Sensor [12], Seq [0-9]+, [0-9]+ bytes"
-        - "UDP TX: Sensor [12], Seq [0-9]+, [0-9]+ bytes \\(fast\\)"
-    timeout: 10
+        - "Sensor module started \\(256B \\+ 384B payloads\\)"
+        - "TCP network transmitter started"
+        - "Packet validator started"
+        - "TCP Network: [0-9]+ packets, [0-9]+ bytes, [0-9]+ bps"
+        - "Validator: Checked [0-9]+ packets - Valid=[0-9]+, Failed=[0-9]+, Success rate=[0-9]+%"
+    timeout: 5
+    min_ram: 32
+    integration_platforms:
+      - native_sim
+    platform_allow:
+      - native_sim
+      - qemu_x86
+      - qemu_cortex_m3
