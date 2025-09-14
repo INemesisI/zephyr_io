@@ -82,6 +82,21 @@ int packet_source_send(struct packet_source *src, struct net_buf *buf, k_timeout
 	return delivered;
 }
 
+int packet_source_send_consume(struct packet_source *src, struct net_buf *buf, k_timeout_t timeout)
+{
+	int ret;
+
+	/* Call the non-consuming version */
+	ret = packet_source_send(src, buf, timeout);
+
+	/* Always consume the caller's reference */
+	if (buf != NULL) {
+		net_buf_unref(buf);
+	}
+
+	return ret;
+}
+
 #ifdef CONFIG_PACKET_IO_STATS
 void packet_source_get_stats(struct packet_source *src,
 			      uint32_t *msg_count,

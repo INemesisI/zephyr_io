@@ -178,6 +178,29 @@ struct packet_sink_ptr {
  */
 int packet_source_send(struct packet_source *src, struct net_buf *buf, k_timeout_t timeout);
 
+/**
+ * @brief Send a packet from source to all connected sinks (consuming reference)
+ *
+ * This function sends a net_buf packet to all sinks connected to the
+ * source. The function CONSUMES the caller's reference to the buffer.
+ * Each successfully queued sink gets its own reference.
+ *
+ * This is more efficient than packet_source_send() when the caller
+ * doesn't need the buffer after sending, as it avoids an extra
+ * ref/unref cycle.
+ *
+ * The timeout represents the total time the send operation may take.
+ * If a sink blocks and the timeout expires, remaining sinks are
+ * attempted with K_NO_WAIT to ensure all sinks get a chance.
+ *
+ * @param src Pointer to the packet source
+ * @param buf Pointer to the net_buf to send (reference IS consumed)
+ * @param timeout Maximum time to wait for all sinks (K_NO_WAIT, K_FOREVER, or timeout)
+ *
+ * @return Number of sinks that successfully received the packet
+ */
+int packet_source_send_consume(struct packet_source *src, struct net_buf *buf, k_timeout_t timeout);
+
 #ifdef CONFIG_PACKET_IO_RUNTIME_OBSERVERS
 /**
  * @brief Add a sink to a source at runtime

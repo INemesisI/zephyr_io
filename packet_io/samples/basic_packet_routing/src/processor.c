@@ -67,12 +67,12 @@ static void processor_thread_fn(void *p1, void *p2, void *p3)
 			header->source_id, header->sequence,
 			header_buf->len, header->content_length);
 
-		/* Send chained packet to connected sinks */
-		ret = packet_source_send(&processor_source, header_buf, K_NO_WAIT);
+		/* Send chained packet to connected sinks using consume API */
+		/* This transfers ownership of header_buf to packet_io, no unref needed */
+		ret = packet_source_send_consume(&processor_source, header_buf, K_NO_WAIT);
 		LOG_DBG("Distributed to %d sinks", ret);
 
-		/* Clean up - only unref header_buf, in_buf is part of the chain */
-		net_buf_unref(header_buf);
+		/* No cleanup needed - packet_source_send_consume took ownership */
 	}
 }
 

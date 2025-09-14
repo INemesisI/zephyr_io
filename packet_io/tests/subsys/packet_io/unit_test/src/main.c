@@ -1361,3 +1361,107 @@ ZTEST(packet_io_unit_test, test_timeout_no_drop_sink)
 		net_buf_unref(bufs[i]);
 	}
 }
+
+/* Test 13: packet_source_send_consume tests */
+ZTEST(packet_io_unit_test, test_send_consume_basic)
+{
+	struct net_buf *buf;
+	struct net_buf *received;
+	int ret;
+
+	/* Test basic consume functionality */
+	buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+	net_buf_add_le32(buf, 0xCAFEBABE);
+
+	/* Send with consume - should NOT need to unref after */
+	ret = packet_source_send_consume(&test_source1, buf, K_NO_WAIT);
+	zassert_equal(ret, 4, "Should deliver to 4 sinks");
+	/* Buffer is consumed - no unref needed here */
+
+	/* Verify all sinks received the data */
+	ret = k_msgq_get(&test_sink1.msgq, &received, K_NO_WAIT);
+	zassert_equal(ret, 0, "Should get from sink1");
+	zassert_equal(*(uint32_t *)received->data, 0xCAFEBABE, "Data mismatch");
+	net_buf_unref(received);
+
+	ret = k_msgq_get(&test_sink2.msgq, &received, K_NO_WAIT);
+	zassert_equal(ret, 0, "Should get from sink2");
+	net_buf_unref(received);
+
+	ret = k_msgq_get(&test_sink3.msgq, &received, K_NO_WAIT);
+	zassert_equal(ret, 0, "Should get from sink3");
+	net_buf_unref(received);
+
+	ret = k_msgq_get(&small_sink.msgq, &received, K_NO_WAIT);
+	zassert_equal(ret, 0, "Should get from small_sink");
+	net_buf_unref(received);
+}
+
+ZTEST(packet_io_unit_test, test_send_consume_no_sinks)
+{
+	struct net_buf *buf;
+	int ret;
+
+	/* Test consume with no sinks - buffer should still be consumed */
+	buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+	net_buf_add_le32(buf, 0xDEADBEEF);
+
+	/* Send to isolated source (has no sinks) */
+	ret = packet_source_send_consume(&isolated_source, buf, K_NO_WAIT);
+	zassert_equal(ret, 0, "Should deliver to 0 sinks");
+	/* Buffer is consumed even though no sinks received it */
+}
+
+ZTEST(packet_io_unit_test, test_send_consume_null_handling)
+{
+	int ret;
+
+	/* Test NULL source - should handle gracefully */
+	ret = packet_source_send_consume(NULL, NULL, K_NO_WAIT);
+	zassert_equal(ret, 0, "NULL source should return 0");
+
+	/* Test NULL buffer with valid source */
+	ret = packet_source_send_consume(&test_source1, NULL, K_NO_WAIT);
+	zassert_equal(ret, 0, "NULL buffer should return 0");
+}
+
+ZTEST(packet_io_unit_test, test_send_consume_with_timeout)
+{
+	struct net_buf *buf;
+	struct net_buf *received;
+	int ret;
+
+	/* Fill the small sink */
+	buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+	net_buf_add_le32(buf, 0x11111111);
+	ret = k_msgq_put(&small_sink.msgq, &buf, K_NO_WAIT);
+	zassert_equal(ret, 0, "Should fill small sink");
+
+	/* Now send with consume and timeout */
+	buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+	net_buf_add_le32(buf, 0x22222222);
+
+	ret = packet_source_send_consume(&test_source1, buf, K_MSEC(10));
+	/* Should deliver to 3 sinks (small_sink is full and will drop) */
+	zassert_equal(ret, 3, "Should deliver to 3 sinks");
+	/* Buffer is consumed - no unref needed */
+
+	/* Clean up */
+	ret = k_msgq_get(&small_sink.msgq, &received, K_NO_WAIT);
+	zassert_equal(ret, 0, "Should get from small sink");
+	net_buf_unref(received);
+
+	/* Drain other sinks */
+	for (int i = 0; i < 3; i++) {
+		ret = k_msgq_get(&test_sink1.msgq, &received, K_NO_WAIT);
+		if (ret == 0) net_buf_unref(received);
+		ret = k_msgq_get(&test_sink2.msgq, &received, K_NO_WAIT);
+		if (ret == 0) net_buf_unref(received);
+		ret = k_msgq_get(&test_sink3.msgq, &received, K_NO_WAIT);
+		if (ret == 0) net_buf_unref(received);
+	}
+}
