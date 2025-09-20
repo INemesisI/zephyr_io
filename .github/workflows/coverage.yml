@@ -1,0 +1,173 @@
+name: Code Coverage
+
+# Run coverage on PRs, pushes to main/develop, and can be triggered manually
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'packet_io/**'
+      - '.github/workflows/coverage.yml'
+      - '.github/actions/setup-packet-io/**'
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'packet_io/**'
+      - '.github/workflows/coverage.yml'
+      - '.github/actions/setup-packet-io/**'
+  workflow_dispatch:
+
+# Cancel ongoing runs for PRs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+# Grant permissions for the workflow
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  coverage:
+    name: Generate Coverage Report
+    runs-on: ubuntu-latest
+    container:
+      image: zephyrprojectrtos/ci:v0.26.18
+      options: '--entrypoint /bin/bash'
+
+    steps:
+      # Need to checkout first to use local composite action
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Complete Packet I/O Environment
+        uses: ./.github/actions/setup-packet-io
+        with:
+          zephyr-version: 'v3.7.1'
+          setup-python-env: 'true'  # This container needs Python setup
+          install-coverage-tools: 'true'
+
+      - name: Run Coverage Tests with Twister
+        working-directory: zephyr
+        shell: bash
+        run: |
+          source .venv/bin/activate
+
+          # Run all packet_io tests with coverage
+          python scripts/twister \
+            --coverage \
+            -T ../packet_io/packet_io/tests \
+            -p native_sim \
+            -v \
+            --inline-logs \
+            -O twister-coverage \
+            --no-clean
+
+      - name: Generate coverage report
+        working-directory: zephyr
+        shell: bash
+        run: |
+          cd twister-coverage
+          # Only analyze packet_io module source code (not tests, samples, or other modules)
+          gcovr --filter=".*packet_io/subsys/packet_io/.*" \
+                --xml coverage.xml \
+                --html-details coverage.html \
+                --print-summary .
+          cd ..
+
+          # Also generate text summary for PR comment (packet_io module only)
+          gcovr --filter=".*packet_io/subsys/packet_io/.*" \
+                --print-summary twister-coverage > coverage-summary.txt
+
+      - name: Upload Coverage Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Coverage Report
+          if-no-files-found: ignore
+          path: |
+            zephyr/twister-coverage/coverage.html
+            zephyr/twister-coverage/coverage.xml
+            zephyr/coverage-summary.txt
+
+      - name: Comment PR with Coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('zephyr/coverage-summary.txt', 'utf8');
+
+            // Extract coverage percentages
+            const lineMatch = summary.match(/lines:\s+([\d.]+)%/);
+            const funcMatch = summary.match(/functions:\s+([\d.]+)%/);
+            const branchMatch = summary.match(/branches:\s+([\d.]+)%/);
+
+            const lineCov = lineMatch ? parseFloat(lineMatch[1]) : 0;
+            const funcCov = funcMatch ? parseFloat(funcMatch[1]) : 0;
+            const branchCov = branchMatch ? parseFloat(branchMatch[1]) : 0;
+
+            // Choose emoji based on line coverage
+            const emoji = lineCov >= 95 ? '🟢' : lineCov >= 90 ? '🟡' : '🔴';
+
+            const comment = `## ${emoji} packet_io Module Coverage
+
+            | Metric | Coverage |
+            |--------|----------|
+            | **Lines** | ${lineCov.toFixed(1)}% |
+            | **Functions** | ${funcCov.toFixed(1)}% |
+            | **Branches** | ${branchCov.toFixed(1)}% |
+
+            > Coverage for \`packet_io/subsys/packet_io/\` only
+            > Minimum threshold: 90%`;
+
+            // Find existing comment or create new one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('packet_io Module Coverage')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
+
+      - name: Coverage Status Check
+        if: github.event_name == 'pull_request'
+        working-directory: zephyr
+        shell: bash
+        run: |
+          # Extract coverage percentage for packet_io module only
+          LINE_COV=$(gcovr --filter=".*packet_io/subsys/packet_io/.*" --print-summary twister-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
+
+          # Set minimum coverage threshold for packet_io module
+          MIN_COVERAGE=90
+
+          # Compare coverage with threshold
+          if (( $(echo "$LINE_COV < $MIN_COVERAGE" | bc -l) )); then
+            echo "❌ Coverage check failed for packet_io module: $LINE_COV% is below minimum threshold of $MIN_COVERAGE%"
+            exit 1
+          else
+            echo "✅ Coverage check passed for packet_io module: $LINE_COV% meets minimum threshold of $MIN_COVERAGE%"
+          fi

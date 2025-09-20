@@ -1,0 +1,109 @@
+name: 'Setup Packet I/O Environment'
+description: 'Sets up complete Zephyr and packet_io environment for testing'
+inputs:
+  zephyr-version:
+    description: 'Zephyr version to checkout'
+    required: false
+    default: 'v3.7.1'
+  setup-python-env:
+    description: 'Whether to setup Python virtual environment'
+    required: false
+    default: 'true'
+  install-coverage-tools:
+    description: 'Whether to install coverage tools (gcovr)'
+    required: false
+    default: 'false'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout packet_io repository
+      uses: actions/checkout@v4
+      with:
+        path: 'packet_io'
+
+    - name: Checkout Zephyr
+      uses: actions/checkout@v4
+      with:
+        repository: 'zephyrproject-rtos/zephyr'
+        ref: ${{ inputs.zephyr-version }}
+        path: 'zephyr'
+
+    - name: Setup minimal environment (native_sim only)
+      working-directory: zephyr
+      shell: bash
+      run: |
+        # For native_sim, we can skip most West modules entirely
+        # Just initialize without updating modules
+        west init -l . || echo "West init skipped"
+
+    - name: Install Python packages
+      if: inputs.setup-python-env == 'true'
+      shell: bash
+      run: |
+        # Install Python venv package - always needed for virtual environments
+        # Try to detect Python version and install appropriate venv package
+        apt-get update
+        PYTHON_VERSION=$(python3 --version | grep -oE '[0-9]+\.[0-9]+')
+        if [ -n "$PYTHON_VERSION" ]; then
+          apt-get install -y python${PYTHON_VERSION}-venv python3-pip || apt-get install -y python3-venv python3-pip
+        else
+          apt-get install -y python3-venv python3-pip
+        fi
+
+    - name: Setup Python Virtual Environment
+      if: inputs.setup-python-env == 'true'
+      working-directory: zephyr
+      shell: bash
+      run: |
+        # Create virtual environment
+        python3 -m venv .venv
+        source .venv/bin/activate
+        pip install --upgrade pip
+        pip install -r scripts/requirements.txt
+
+    - name: Install coverage tools
+      if: inputs.install-coverage-tools == 'true'
+      shell: bash
+      run: |
+        # Install gcovr for coverage reporting
+        pip3 install gcovr
+
+    - name: Setup Zephyr SDK Environment
+      shell: bash
+      run: |
+        # Find the actual SDK installation
+        echo "=== Checking SDK locations ==="
+        find /opt -name "*zephyr-sdk*" -type d 2>/dev/null || echo "No zephyr-sdk dirs found"
+        ls -la /opt/toolchains/ 2>/dev/null || echo "No /opt/toolchains"
+
+        # Set SDK path - try common locations
+        if [ -d "/opt/toolchains/zephyr-sdk-0.16.1" ]; then
+          SDK_PATH="/opt/toolchains/zephyr-sdk-0.16.1"
+        elif [ -d "/opt/toolchains/zephyr-sdk-0.16.0" ]; then
+          SDK_PATH="/opt/toolchains/zephyr-sdk-0.16.0"
+        else
+          SDK_PATH=$(find /opt -name "*zephyr-sdk*" -type d 2>/dev/null | head -1)
+        fi
+
+        if [ -n "$SDK_PATH" ]; then
+          echo "Setting ZEPHYR_SDK_INSTALL_DIR to: $SDK_PATH"
+          echo "ZEPHYR_SDK_INSTALL_DIR=$SDK_PATH" >> $GITHUB_ENV
+        else
+          echo "No Zephyr SDK found, container may have it pre-configured"
+        fi
+
+    - name: Setup Environment Variables
+      working-directory: zephyr
+      shell: bash
+      run: |
+        echo "ZEPHYR_BASE=${GITHUB_WORKSPACE}/zephyr" >> $GITHUB_ENV
+        echo "ZEPHYR_TOOLCHAIN_VARIANT=zephyr" >> $GITHUB_ENV
+        echo "ZEPHYR_EXTRA_MODULES=${GITHUB_WORKSPACE}/packet_io/packet_io" >> $GITHUB_ENV
+
+        # Set Python paths if virtual environment was created
+        if [ -d ".venv" ]; then
+          echo "PYTHON_CMD=${GITHUB_WORKSPACE}/zephyr/.venv/bin/python3" >> $GITHUB_ENV
+          echo "PYTHON_PREFER=${GITHUB_WORKSPACE}/zephyr/.venv/bin/python3" >> $GITHUB_ENV
+          echo "CMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/zephyr/.venv" >> $GITHUB_ENV
+        fi

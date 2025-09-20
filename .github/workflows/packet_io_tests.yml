@@ -8,12 +8,14 @@ on:
     paths:
       - 'packet_io/**'
       - '.github/workflows/packet_io_tests.yml'
+      - '.github/actions/setup-packet-io/**'
   push:
     branches:
       - main
     paths:
       - 'packet_io/**'
       - '.github/workflows/packet_io_tests.yml'
+      - '.github/actions/setup-packet-io/**'
   workflow_dispatch:
 
 # Cancel ongoing runs for PRs
@@ -36,84 +38,22 @@ jobs:
       options: '--entrypoint /bin/bash'
 
     steps:
-      - name: Checkout packet_io repository
+      # Need to checkout first to use local composite action
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup Complete Packet I/O Environment
+        uses: ./.github/actions/setup-packet-io
         with:
-          path: 'packet_io'
-
-      - name: Checkout Zephyr 3.7.1
-        uses: actions/checkout@v4
-        with:
-          repository: 'zephyrproject-rtos/zephyr'
-          ref: 'v3.7.1'
-          path: 'zephyr'
-
-      - name: Setup minimal environment (native_sim only)
-        working-directory: zephyr
-        run: |
-          # For native_sim, we can skip most West modules entirely
-          # Just initialize without updating modules
-          west init -l . || echo "West init skipped"
-
-      - name: Install Python packages
-        run: |
-          apt-get update
-          apt-get install -y python3-venv python3-pip
-
-      - name: Setup Python Environment
-        working-directory: zephyr
-        shell: bash
-        run: |
-          # Create virtual environment
-          python3 -m venv .venv
-          source .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r scripts/requirements.txt
-
-      - name: Setup Zephyr SDK Environment
-        run: |
-          # Find the actual SDK installation
-          echo "=== Checking SDK locations ==="
-          find /opt -name "*zephyr-sdk*" -type d 2>/dev/null || echo "No zephyr-sdk dirs found"
-          ls -la /opt/toolchains/ 2>/dev/null || echo "No /opt/toolchains"
-
-          # Look for SDK config files
-          echo "=== Looking for SDK config files ==="
-          find /opt -name "*zephyr-sdk*config.cmake" 2>/dev/null || echo "No config files found"
-          find /opt -name "Zephyr-sdkConfig.cmake" 2>/dev/null || echo "No Zephyr-sdkConfig.cmake found"
-
-          # Set SDK path - try common locations
-          if [ -d "/opt/toolchains/zephyr-sdk-0.16.1" ]; then
-            SDK_PATH="/opt/toolchains/zephyr-sdk-0.16.1"
-          elif [ -d "/opt/toolchains/zephyr-sdk-0.16.0" ]; then
-            SDK_PATH="/opt/toolchains/zephyr-sdk-0.16.0"
-          else
-            SDK_PATH=$(find /opt -name "*zephyr-sdk*" -type d 2>/dev/null | head -1)
-          fi
-
-          echo "Setting ZEPHYR_SDK_INSTALL_DIR to: $SDK_PATH"
-          echo "ZEPHYR_SDK_INSTALL_DIR=$SDK_PATH" >> $GITHUB_ENV
-
-      - name: Setup Environment Variables
-        working-directory: zephyr
-        run: |
-          echo "ZEPHYR_BASE=${GITHUB_WORKSPACE}/zephyr" >> $GITHUB_ENV
-          echo "ZEPHYR_TOOLCHAIN_VARIANT=zephyr" >> $GITHUB_ENV
-          echo "ZEPHYR_EXTRA_MODULES=${GITHUB_WORKSPACE}/packet_io/packet_io" >> $GITHUB_ENV
-          echo "PYTHON_CMD=${GITHUB_WORKSPACE}/zephyr/.venv/bin/python3" >> $GITHUB_ENV
-          echo "PYTHON_PREFER=${GITHUB_WORKSPACE}/zephyr/.venv/bin/python3" >> $GITHUB_ENV
-          echo "CMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/zephyr/.venv" >> $GITHUB_ENV
+          zephyr-version: 'v3.7.1'
+          setup-python-env: 'true'  # This container needs Python setup
+          install-coverage-tools: 'false'
 
       - name: Run Packet I/O Tests with Twister
         working-directory: zephyr
         shell: bash
         run: |
           source .venv/bin/activate
-          export ZEPHYR_BASE=${GITHUB_WORKSPACE}/zephyr
-          export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
-          export ZEPHYR_EXTRA_MODULES=${GITHUB_WORKSPACE}/packet_io/packet_io
-          export PYTHON_PREFER=${PYTHON_CMD}
-          export CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}
 
           # Run all packet_io tests and samples
           python scripts/twister \
