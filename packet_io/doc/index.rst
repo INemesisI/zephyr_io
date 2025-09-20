@@ -31,7 +31,8 @@ count for each successful delivery.
 The system comprises:
 
 * **Sources**: Packet producers that send network buffers to connected sinks
-* **Sinks**: Packet consumers with embedded message queues that receive packets
+* **Sinks**: Packet consumers with handler callbacks that process packets immediately or via queues
+* **Packet Event Queues**: Message queues that handle deferred packet processing for queued sinks
 * **Connections**: Static compile-time wiring between sources and sinks
 * **Zero-copy distribution**: Leverages :c:struct:`net_buf` reference counting to avoid data copies
 
@@ -50,23 +51,34 @@ Zero-Copy Operation
 The Packet I/O system achieves zero-copy by using the reference counting mechanism of Zephyr's
 :c:struct:`net_buf`. When sending a packet to multiple sinks:
 
-1. The source calls :c:func:`packet_source_send` with a network buffer
-2. For each successfully queued delivery, the buffer's reference count is incremented
-3. Each sink receives a reference to the same buffer
-4. Sinks release their reference when done processing
+1. The source calls :c:func:`packet_source_send` or :c:func:`packet_source_send_consume` with a network buffer
+2. For each sink, the buffer's reference count is incremented
+3. Each sink's handler receives a borrowed (non-owned) reference to the buffer
+4. The framework automatically releases the reference after the handler completes - handlers must NOT call unref
 
 This eliminates memory copies entirely, making it ideal for high-throughput packet processing.
+The ``send_consume`` variant is more convenient when the caller is done with the buffer,
+as it transfers ownership to the framework instead of keeping a reference.
 
-Static Compile-Time Wiring
---------------------------
+Connection Wiring
+-----------------
 
-All connections between sources and sinks are defined at compile time using macros that leverage
-Zephyr's iterable sections. This approach provides:
+Connections between sources and sinks can be established both at compile time and runtime.
+**Compile-time wiring is the recommended approach** for most use cases.
+
+**Compile-Time Wiring** (recommended):
+
+Using macros that leverage Zephyr's iterable sections provides:
 
 * **No runtime overhead**: Connections are resolved at link time
 * **Memory efficiency**: No dynamic allocation needed
 * **Type safety**: Connections verified at compile time
 * **Predictable behavior**: System topology known at build time
+
+**Runtime Wiring** (for dynamic scenarios):
+
+The framework also supports runtime connections for cases requiring dynamic topology changes,
+though this comes with additional overhead and complexity.
 
 Many-to-Many Communication
 --------------------------
@@ -97,17 +109,21 @@ When a source sends a packet, the following sequence occurs:
 1. **Lock acquisition**: The source's connection list is protected by a spinlock
 2. **Distribution**: For each connected sink:
 
-   * Attempt non-blocking enqueue to the sink's message queue
+   * **Immediate mode**: Handler executes immediately in source context
+   * **Queued mode**: Packet event is queued for later processing
    * On success: increment buffer reference count
-   * On failure with drop_on_full: silently drop and count
-   * On failure without drop_on_full: return error
+   * On queue failure: drop and count
 
 3. **Lock release**: Spinlock is released
-4. **Caller retains reference**: The caller keeps their original reference
+4. **Reference handling**:
+
+   * ``packet_source_send``: Caller retains their reference
+   * ``packet_source_send_consume``: Caller's reference is consumed
 
 .. note::
-   The distribution happens in the context of the sending thread. Be mindful of
-   this when sending from high-priority contexts or ISRs.
+   For immediate mode sinks, the handler executes in the context of the sending thread.
+   Be mindful of this when sending from high-priority contexts or ISRs. Use queued mode
+   sinks for deferred processing.
 
 Usage
 *****
@@ -115,21 +131,30 @@ Usage
 Basic API
 =========
 
-The Packet I/O system provides a simple API with four main macros:
+The Packet I/O system provides a handler-based API with flexible execution modes:
 
 .. code-block:: c
 
     /* Define a packet source */
     PACKET_SOURCE_DEFINE(my_source);
 
-    /* Define a packet sink with queue size and drop policy */
-    PACKET_SINK_DEFINE(my_sink, 32, true);  /* 32 entries, drop on full */
+    /* Handler function for processing packets */
+    void my_handler(struct packet_sink *sink, struct net_buf *buf);
 
-    /* Connect source to sink at compile time */
-    PACKET_SOURCE_CONNECT(my_source, my_sink);
+    /* Define immediate execution sink (runs in source context) */
+    PACKET_SINK_DEFINE_IMMEDIATE(my_sink_immediate, my_handler);
 
-    /* Send packet at runtime (does NOT consume reference) */
-    int delivered = packet_source_send(&my_source, buf);
+    /* Define packet event queue for queued execution */
+    PACKET_EVENT_QUEUE_DEFINE(my_queue, 32);  /* 32 events max */
+    PACKET_SINK_DEFINE_QUEUED(my_sink_queued, my_handler, my_queue);
+
+    /* Connect source to sinks at compile time */
+    PACKET_SOURCE_CONNECT(my_source, my_sink_immediate);
+    PACKET_SOURCE_CONNECT(my_source, my_sink_queued);
+
+    /* Send packet at runtime */
+    packet_source_send(&my_source, buf, K_NO_WAIT);           /* Preserve reference */
+    packet_source_send_consume(&my_source, buf2, K_MSEC(100)); /* Consume reference */
 
 Defining Sources and Sinks
 ==========================
@@ -160,11 +185,9 @@ A source represents a packet producer. Define sources using :c:macro:`PACKET_SOU
             uint8_t *data = net_buf_add(buf, 64);
             memset(data, 0x42, 64);  /* Fill with sensor data */
 
-            /* Send to all connected sinks */
-            packet_source_send(&sensor_source, buf);
-
-            /* Release our reference */
-            net_buf_unref(buf);
+            /* Send to all connected sinks - consume reference */
+            packet_source_send_consume(&sensor_source, buf, K_MSEC(100));
+            /* No need to unref - send_consume handles it */
 
             k_sleep(K_MSEC(100));
         }
@@ -173,30 +196,54 @@ A source represents a packet producer. Define sources using :c:macro:`PACKET_SOU
 Sinks
 -----
 
-A sink represents a packet consumer with an embedded message queue. Define sinks using
-:c:macro:`PACKET_SINK_DEFINE`:
+A sink represents a packet consumer with a handler callback. Sinks can execute immediately
+or queue packets for deferred processing.
+
+.. important::
+   Handler functions **MUST NOT** call ``net_buf_unref()`` on the received buffer.
+   The handler receives a buffer it doesn't own - it's borrowed from the framework.
+   The Packet I/O framework automatically manages buffer references for all handlers,
+   regardless of whether they are immediate or queued. This ensures consistent behavior
+   and prevents memory leaks or double-free errors.
+
+   If you need to chain buffers with ``net_buf_frag_add()``, you must call
+   ``net_buf_ref()`` first, since the handler doesn't own the buffer it received.
+
+**Immediate Mode Sink** (executes in source context):
 
 .. code-block:: c
 
     #include <zephyr/packet_io/packet_io.h>
 
-    /* Define sink: 64 queue entries, drop packets if full */
-    PACKET_SINK_DEFINE(logger_sink, 64, true);
-
-    void logger_thread(void)
+    /* Handler function */
+    void logger_handler(struct packet_sink *sink, struct net_buf *buf)
     {
-        struct net_buf *buf;
+        LOG_INF("Received %d bytes", buf->len);
+        process_packet(buf->data, buf->len);
+        /* Buffer is borrowed, unref is handled automatically */
+    }
 
+    /* Define immediate sink */
+    PACKET_SINK_DEFINE_IMMEDIATE(logger_sink, logger_handler);
+
+**Queued Mode Sink** (deferred processing):
+
+.. code-block:: c
+
+    /* Define packet event queue for deferred handling */
+    PACKET_EVENT_QUEUE_DEFINE(processing_queue, 64);
+
+    /* Define queued sink */
+    PACKET_SINK_DEFINE_QUEUED(processor_sink, logger_handler, processing_queue);
+
+    /* Processing thread */
+    void processor_thread(void)
+    {
         while (1) {
-            /* Receive packet pointer from queue */
-            if (k_msgq_get(&logger_sink.msgq, &buf, K_FOREVER) == 0) {
-                LOG_INF("Received %d bytes", buf->len);
-
-                /* Process packet data */
-                process_packet(buf->data, buf->len);
-
-                /* Release our reference */
-                net_buf_unref(buf);
+            /* Process events from the queue */
+            int ret = packet_event_process(&processing_queue, K_FOREVER);
+            if (ret != 0 && ret != -EAGAIN) {
+                LOG_ERR("Failed to process event: %d", ret);
             }
         }
     }
@@ -204,88 +251,127 @@ A sink represents a packet consumer with an embedded message queue. Define sinks
 Wiring Sources and Sinks
 ========================
 
-Connections between sources and sinks are established at compile time using
-:c:macro:`PACKET_SOURCE_CONNECT`:
+**Compile-Time Connections**
+
+Static connections are established using :c:macro:`PACKET_SOURCE_CONNECT`:
 
 .. code-block:: c
 
-    #include <zephyr/packet_io/packet_io.h>
+    /* Single file - direct connection */
+    PACKET_SOURCE_DEFINE(my_source);
+    PACKET_SINK_DEFINE_IMMEDIATE(my_sink, handler);
+    PACKET_SOURCE_CONNECT(my_source, my_sink);
 
-    /* Define components */
-    NET_BUF_POOL_DEFINE(data_pool, 10, 64, 4, NULL);
+    /* Modular design - components define their own sources/sinks */
+    /* sensor.c - Sensor module */
     PACKET_SOURCE_DEFINE(sensor_source);
-    PACKET_SINK_DEFINE(processor_sink, 32, false);  /* Don't drop */
-    PACKET_SINK_DEFINE(logger_sink, 64, true);      /* Drop if full */
 
-    /* Wire connections - one source to multiple sinks */
-    PACKET_SOURCE_CONNECT(sensor_source, processor_sink);
+    /* network.c - Network module */
+    PACKET_SINK_DEFINE_QUEUED(network_sink, network_handler, net_queue);
+
+    /* logger.c - Logging module */
+    PACKET_SINK_DEFINE_IMMEDIATE(logger_sink, log_handler);
+
+    /* main.c - Application wiring */
+    PACKET_SOURCE_DECLARE(sensor_source);   /* From sensor.c */
+    PACKET_SINK_DECLARE(network_sink);      /* From network.c */
+    PACKET_SINK_DECLARE(logger_sink);       /* From logger.c */
+
+    /* Application decides how modules connect */
+    PACKET_SOURCE_CONNECT(sensor_source, network_sink);
     PACKET_SOURCE_CONNECT(sensor_source, logger_sink);
 
-    /* Producer thread */
-    void producer_thread(void)
-    {
-        while (1) {
-            struct net_buf *buf = net_buf_alloc(&data_pool, K_NO_WAIT);
-            if (buf) {
-                /* Fill buffer with data */
-                uint8_t *data = net_buf_add(buf, 64);
-                generate_data(data, 64);
+    /* Multiple connections from one source */
+    PACKET_SOURCE_CONNECT(sensor_source, sink1);
+    PACKET_SOURCE_CONNECT(sensor_source, sink2);
+    PACKET_SOURCE_CONNECT(sensor_source, sink3);
 
-                /* Send to all connected sinks */
-                packet_source_send(&sensor_source, buf);
-                net_buf_unref(buf);
-            }
-            k_sleep(K_MSEC(100));
-        }
-    }
+**Runtime Connections**
 
-    /* Consumer threads read from their respective queues */
-    void processor_thread(void)
+Dynamic connections can be added/removed at runtime when
+:kconfig:option:`CONFIG_PACKET_IO_RUNTIME_OBSERVERS` is enabled:
+
+.. code-block:: c
+
+    /* IMPORTANT: Connection must be static or allocated, NOT stack-local */
+    /* Debug builds will detect and reject stack allocations automatically */
+    static struct packet_connection runtime_conn;
+
+    /* Add runtime connection */
+    runtime_conn.source = &sensor_source;
+    runtime_conn.sink = &debug_sink;
+    packet_connection_add(&runtime_conn);
+
+    /* Remove runtime connection */
+    packet_connection_remove(&runtime_conn);
+
+    /* Example: Conditional debug monitoring */
+    void enable_debug_monitoring(bool enable)
     {
-        struct net_buf *buf;
-        while (k_msgq_get(&processor_sink.msgq, &buf, K_FOREVER) == 0) {
-            process_data(buf->data, buf->len);
-            net_buf_unref(buf);
+        /* Connection MUST be static - persists across function calls */
+        static struct packet_connection debug_conn = {
+            .source = &data_source,
+            .sink = &debug_sink
+        };
+
+        if (enable) {
+            packet_connection_add(&debug_conn);
+        } else {
+            packet_connection_remove(&debug_conn);
         }
     }
 
 Advanced Usage
 ==============
 
-Using k_poll with Sinks
------------------------
+Using k_poll with Packet Event Processors
+------------------------------------------
 
-Sinks can be integrated with :c:func:`k_poll` for efficient event-driven processing:
+Packet event queues can be integrated with :c:func:`k_poll` for efficient event-driven processing:
 
 .. code-block:: c
 
-    PACKET_SINK_DEFINE(processor_sink, 32, false);
-    static struct k_sem shutdown_sem;
+    /* Define packet event queue and sinks */
+    PACKET_EVENT_QUEUE_DEFINE(processing_queue, 32);
+
+    void process_handler(struct packet_sink *sink, struct net_buf *buf)
+    {
+        uint32_t id = (uint32_t)sink->user_data;
+        LOG_INF("Processor %d: %d bytes", id, buf->len);
+        process_packet(buf);
+        /* Buffer is borrowed, unref is handled automatically */
+    }
+
+    /* Multiple sinks can share the same queue */
+    PACKET_SINK_DEFINE_WITH_DATA(processor1, process_handler,
+                                  &processing_queue_msgq, (void *)1);
+    PACKET_SINK_DEFINE_WITH_DATA(processor2, process_handler,
+                                  &processing_queue_msgq, (void *)2);
+
+    static struct k_sem shutdown_sem = Z_SEM_INITIALIZER(shutdown_sem, 0, 1);
+
+    /* Static poll event initialization */
+    static struct k_poll_event events[2] = {
+        K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_MSGQ_DATA_AVAILABLE,
+                                        K_POLL_MODE_NOTIFY_ONLY,
+                                        &processing_queue_msgq,
+                                        0),
+        K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_SEM_AVAILABLE,
+                                        K_POLL_MODE_NOTIFY_ONLY,
+                                        &shutdown_sem,
+                                        0),
+    };
 
     void processor_thread(void)
     {
-        struct net_buf *buf;
-        struct k_poll_event events[2];
-
-        k_sem_init(&shutdown_sem, 0, 1);
-
-        k_poll_event_init(&events[0],
-                          K_POLL_TYPE_MSGQ_DATA_AVAILABLE,
-                          K_POLL_MODE_NOTIFY_ONLY,
-                          &processor_sink.msgq);
-
-        k_poll_event_init(&events[1],
-                          K_POLL_TYPE_SEM_AVAILABLE,
-                          K_POLL_MODE_NOTIFY_ONLY,
-                          &shutdown_sem);
 
         while (1) {
             k_poll(events, ARRAY_SIZE(events), K_FOREVER);
 
             if (events[0].state == K_POLL_STATE_MSGQ_DATA_AVAILABLE) {
-                while (k_msgq_get(&processor_sink.msgq, &buf, K_NO_WAIT) == 0) {
-                    process_packet(buf);
-                    net_buf_unref(buf);
+                /* Process all available events */
+                while (packet_event_process(&processing_queue, K_NO_WAIT) == 0) {
+                    /* Event processed by handler */
                 }
                 events[0].state = K_POLL_STATE_NOT_READY;
             }
@@ -305,65 +391,39 @@ Packet Processing Pipeline
 
     Processing pipeline with header addition and multiple outputs.
 
-Here's an example of a packet processing pipeline with header addition:
+Example showing how a processor adds headers by chaining buffers:
 
 .. code-block:: c
 
-    /* Protocol header */
-    struct protocol_header {
-        uint8_t source_id;
-        uint16_t sequence;
-        uint32_t timestamp;
-    } __packed;
-
-    /* Buffer pools */
-    NET_BUF_POOL_DEFINE(raw_pool, 20, 256, 4, NULL);
-    NET_BUF_POOL_DEFINE(processed_pool, 20,
-                        sizeof(struct protocol_header) + 256, 4, NULL);
-
-    /* Pipeline components */
-    PACKET_SOURCE_DEFINE(raw_source);
-    PACKET_SINK_DEFINE(processor_input, 128, true);
+    /* Processor component: receives data, adds header, forwards */
+    PACKET_SINK_DEFINE_IMMEDIATE(processor_input, processor_handler);
     PACKET_SOURCE_DEFINE(processor_output);
-    PACKET_SINK_DEFINE(network_sink, 32, false);
-    PACKET_SINK_DEFINE(storage_sink, 64, true);
 
-    /* Wire the pipeline */
-    PACKET_SOURCE_CONNECT(raw_source, processor_input);
-    PACKET_SOURCE_CONNECT(processor_output, network_sink);
-    PACKET_SOURCE_CONNECT(processor_output, storage_sink);
+    NET_BUF_POOL_DEFINE(header_pool, 10, 8, 4, NULL);  /* For 8-byte headers */
 
-    /* Processing thread adds header */
-    void processor_thread(void)
+    void processor_handler(struct packet_sink *sink, struct net_buf *data_buf)
     {
-        struct net_buf *in_buf, *out_buf;
-        uint16_t sequence = 0;
+        struct net_buf *header_buf;
 
-        while (1) {
-            if (k_msgq_get(&processor_input.msgq, &in_buf, K_FOREVER) != 0)
-                continue;
-
-            out_buf = net_buf_alloc(&processed_pool, K_NO_WAIT);
-            if (!out_buf) {
-                net_buf_unref(in_buf);
-                continue;
-            }
-
-            /* Add header */
-            struct protocol_header *hdr = net_buf_add(out_buf, sizeof(*hdr));
-            hdr->source_id = 0x42;
-            hdr->sequence = sequence++;
-            hdr->timestamp = k_uptime_get_32();
-
-            /* Copy original data */
-            net_buf_add_mem(out_buf, in_buf->data, in_buf->len);
-
-            /* Forward to outputs */
-            packet_source_send(&processor_output, out_buf);
-
-            net_buf_unref(out_buf);
-            net_buf_unref(in_buf);
+        /* Allocate header buffer */
+        header_buf = net_buf_alloc(&header_pool, K_NO_WAIT);
+        if (!header_buf) {
+            return;  /* Drop on allocation failure */
         }
+
+        /* Add 8-byte protocol header */
+        net_buf_add_le32(header_buf, 0x12345678);  /* Magic number */
+        net_buf_add_le32(header_buf, data_buf->len);  /* Payload length */
+
+        /* Chain original data after header - zero copy! */
+        /* CRITICAL: Add ref before chaining since handler doesn't own data_buf
+         * but net_buf_frag_add() takes ownership of the chained buffer */
+        net_buf_ref(data_buf);
+        net_buf_frag_add(header_buf, data_buf);
+
+        /* Forward complete packet (header + data) */
+        packet_source_send_consume(&processor_output, header_buf, K_NO_WAIT);
+        /* Input buffer is borrowed, unref is handled automatically */
     }
 
 Statistics and Monitoring
@@ -375,17 +435,26 @@ When :kconfig:option:`CONFIG_PACKET_IO_STATS` is enabled, the system tracks:
 
     void print_statistics(void)
     {
+        uint32_t send_count, queued_total, handled_count, dropped_count;
+
+        /* Source statistics */
+        packet_source_get_stats(&my_source, &send_count, &queued_total);
         LOG_INF("Source statistics:");
-        LOG_INF("  Messages sent: %u", atomic_get(&my_source.msg_count));
+        LOG_INF("  Messages sent: %u", send_count);
+        LOG_INF("  Queued total: %u", queued_total);
 
+        /* Sink statistics */
+        packet_sink_get_stats(&my_sink, &handled_count, &dropped_count);
         LOG_INF("Sink statistics:");
-        LOG_INF("  Messages received: %u", atomic_get(&my_sink.received_count));
-        LOG_INF("  Messages dropped: %u", atomic_get(&my_sink.dropped_count));
+        LOG_INF("  Messages handled: %u", handled_count);
+        LOG_INF("  Messages dropped: %u", dropped_count);
 
-        /* Check queue status */
-        uint32_t used = k_msgq_num_used_get(&my_sink.msgq);
-        uint32_t free = k_msgq_num_free_get(&my_sink.msgq);
-        LOG_INF("  Queue: %u used, %u free", used, free);
+        /* For queued sinks, check queue status */
+        if (my_queue.msgq) {
+            uint32_t used = k_msgq_num_used_get(my_queue.msgq);
+            uint32_t free = k_msgq_num_free_get(my_queue.msgq);
+            LOG_INF("  Queue: %u used, %u free", used, free);
+        }
     }
 
 Design Patterns
@@ -398,15 +467,37 @@ A common pattern for distributing sensor data to multiple consumers:
 
 .. code-block:: c
 
+    /* Handler functions */
+    void fusion_handler(struct packet_sink *sink, struct net_buf *buf)
+    {
+        sensor_type_t type = identify_sensor(buf);
+        update_fusion_state(type, buf);
+        /* Buffer is borrowed, unref is handled automatically */
+    }
+
+    void logger_handler(struct packet_sink *sink, struct net_buf *buf)
+    {
+        log_sensor_data(buf);
+        /* Buffer is borrowed, unref is handled automatically */
+    }
+
+    void network_handler(struct packet_sink *sink, struct net_buf *buf)
+    {
+        upload_to_cloud(buf);
+        /* Buffer is borrowed, unref is handled automatically */
+    }
+
     /* Multiple sensor sources */
     PACKET_SOURCE_DEFINE(accel_source);
     PACKET_SOURCE_DEFINE(gyro_source);
     PACKET_SOURCE_DEFINE(mag_source);
 
     /* Various data consumers */
-    PACKET_SINK_DEFINE(fusion_sink, 128, true);    /* Sensor fusion */
-    PACKET_SINK_DEFINE(logger_sink, 256, true);    /* Data logging */
-    PACKET_SINK_DEFINE(network_sink, 32, false);   /* Cloud upload */
+    PACKET_EVENT_QUEUE_DEFINE(fusion_queue, 128);
+    PACKET_SINK_DEFINE_QUEUED(fusion_sink, fusion_handler, fusion_queue);
+    PACKET_SINK_DEFINE_IMMEDIATE(logger_sink, logger_handler);
+    PACKET_EVENT_QUEUE_DEFINE(network_queue, 32);
+    PACKET_SINK_DEFINE_QUEUED(network_sink, network_handler, network_queue);
 
     /* All sensors to fusion algorithm */
     PACKET_SOURCE_CONNECT(accel_source, fusion_sink);
@@ -434,38 +525,48 @@ Implementing a packet router that distributes based on packet type:
 
 .. code-block:: c
 
+    /* Router handler */
+    void router_handler(struct packet_sink *sink, struct net_buf *buf)
+    {
+        /* Route based on packet type */
+        switch (buf->data[0]) {
+        case PROTO_TCP:
+            packet_source_send(&tcp_output, buf, K_NO_WAIT);
+            break;
+        case PROTO_UDP:
+            packet_source_send(&udp_output, buf, K_NO_WAIT);
+            break;
+        default:
+            packet_source_send(&raw_output, buf, K_NO_WAIT);
+        }
+        /* Buffer is borrowed, unref is handled automatically */
+    }
+
     /* Router with multiple outputs */
-    PACKET_SINK_DEFINE(router_input, 256, false);
+    PACKET_EVENT_QUEUE_DEFINE(router_queue, 256);
+    PACKET_SINK_DEFINE_QUEUED(router_input, router_handler, router_queue);
     PACKET_SOURCE_DEFINE(tcp_output);
     PACKET_SOURCE_DEFINE(udp_output);
     PACKET_SOURCE_DEFINE(raw_output);
 
-    /* Connect outputs to handlers */
+    /* Declare and connect output handlers */
+    PACKET_SINK_DECLARE(tcp_handler);
+    PACKET_SINK_DECLARE(udp_handler);
+    PACKET_SINK_DECLARE(raw_handler);
+
     PACKET_SOURCE_CONNECT(tcp_output, tcp_handler);
     PACKET_SOURCE_CONNECT(udp_output, udp_handler);
     PACKET_SOURCE_CONNECT(raw_output, raw_handler);
 
     void router_thread(void)
     {
-        struct net_buf *buf;
+        int ret;
 
         while (1) {
-            if (k_msgq_get(&router_input.msgq, &buf, K_FOREVER) != 0)
-                continue;
-
-            /* Route based on packet type */
-            switch (buf->data[0]) {
-            case PROTO_TCP:
-                packet_source_send(&tcp_output, buf);
-                break;
-            case PROTO_UDP:
-                packet_source_send(&udp_output, buf);
-                break;
-            default:
-                packet_source_send(&raw_output, buf);
+            ret = packet_event_process(&router_queue, K_FOREVER);
+            if (ret < 0) {
+                LOG_ERR("Router processing error: %d", ret);
             }
-
-            net_buf_unref(buf);
         }
     }
 
@@ -485,32 +586,25 @@ Proper buffer pool configuration is critical for performance:
     NET_BUF_POOL_DEFINE(large_pool, 16, 1500, 4, NULL);   /* Ethernet frames */
     NET_BUF_POOL_DEFINE(jumbo_pool, 4, 4096, 4, NULL);    /* Jumbo frames */
 
-Queue Sizing
-============
-
-Size sink queues based on expected traffic patterns:
-
-* **High-frequency sources**: Use larger queues to handle bursts
-* **Drop-sensitive data**: Set ``drop_on_full`` to false and size appropriately
-* **Best-effort data**: Set ``drop_on_full`` to true for overflow handling
-
-.. code-block:: c
-
-    /* Critical data - never drop, large queue */
-    PACKET_SINK_DEFINE(critical_sink, 256, false);
-
-    /* Telemetry - can drop old data, moderate queue */
-    PACKET_SINK_DEFINE(telemetry_sink, 64, true);
-
-    /* Debug output - best effort, small queue */
-    PACKET_SINK_DEFINE(debug_sink, 16, true);
 
 ISR Usage
 =========
 
-The Packet I/O system can be used from ISRs:
+The Packet I/O system can be used from ISRs with proper sink configuration:
 
 .. code-block:: c
+
+    /* ISR-safe handler for immediate processing */
+    void event_handler(struct packet_sink *sink, struct net_buf *buf)
+    {
+        /* Quick processing only - defer heavy work to thread context */
+        atomic_inc(&packets_received);
+        /* Buffer is borrowed, unref is handled automatically */
+    }
+
+    /* Use queued sink for ISR sources to defer processing */
+    PACKET_EVENT_QUEUE_DEFINE(isr_queue, 128);
+    PACKET_SINK_DEFINE_QUEUED(isr_sink, process_handler, isr_queue);
 
     void my_isr(void *arg)
     {
@@ -523,13 +617,16 @@ The Packet I/O system can be used from ISRs:
         read_hardware_fifo(data, 64);
 
         /* Send with K_NO_WAIT in ISR context */
-        packet_source_send(&isr_source, buf);
-        net_buf_unref(buf);
+        packet_source_send_consume(&isr_source, buf, K_NO_WAIT);
     }
 
-.. warning::
-   When sending from ISRs, always use :c:macro:`K_NO_WAIT` and be aware that
-   the distribution happens in ISR context.
+.. note::
+   When sending from ISRs:
+
+   * Always use :c:macro:`K_NO_WAIT` for send operations
+   * Queued sinks automatically defer processing to thread context (ISR-safe)
+   * Message queue operations (``k_msgq_put``) are ISR-safe and don't require work queues
+   * Keep immediate handlers very short if used with ISR sources
 
 Comparison with Zbus
 ********************
@@ -553,10 +650,10 @@ While both Packet I/O and Zbus enable many-to-many communication, they serve dif
      - Zero-copy via reference counting
      - Copy-based with shared channel
    * - **Connection Model**
-     - Static compile-time only
+     - Static and runtime (with CONFIG_PACKET_IO_RUNTIME_OBSERVERS)
      - Static and runtime
    * - **Observer Types**
-     - Sinks with queues
+     - Sinks with handlers (immediate/queued)
      - Listeners, subscribers, message subscribers
    * - **Synchronization**
      - Spinlock (ISR-safe)
@@ -588,6 +685,7 @@ Related configuration options:
 
 * :kconfig:option:`CONFIG_PACKET_IO` - Enable the Packet I/O subsystem
 * :kconfig:option:`CONFIG_PACKET_IO_STATS` - Enable statistics tracking for sources and sinks
+* :kconfig:option:`CONFIG_PACKET_IO_NAMES` - Enable debug names for sources and sinks
 * :kconfig:option:`CONFIG_PACKET_IO_LOG_LEVEL` - Set logging level (0-4)
 * :kconfig:option:`CONFIG_PACKET_IO_PRIORITY` - System initialization priority (default 99)
 
@@ -610,6 +708,7 @@ Example configuration:
     # Recommended for debugging
     CONFIG_LOG=y
     CONFIG_ASSERT=y
+    CONFIG_PACKET_IO_NAMES=y  # Debug names
 
 Samples
 *******
@@ -630,14 +729,6 @@ The Packet I/O system includes comprehensive test coverage:
 * **Integration Tests** (:file:`packet_io/tests/subsys/packet_io/integration`) - Large data
   transfers, streaming scenarios, and performance validation
 
-Run tests using:
-
-.. code-block:: bash
-
-    # Run all tests with Twister
-    PYTHON_PREFER=$PWD/.venv/bin/python3 CMAKE_PREFIX_PATH=$PWD/.venv \
-      .venv/bin/python zephyr/scripts/twister \
-      -T packet_io/tests -p native_sim -v
 
 API Reference
 *************

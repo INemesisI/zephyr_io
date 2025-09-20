@@ -14,8 +14,11 @@
 
 LOG_MODULE_REGISTER(validator, LOG_LEVEL_INF);
 
-/* Define validator sink */
-PACKET_SINK_DEFINE(validator_sink, 10, false);  /* Queue 10, wait if full */
+/* Handler for validation */
+static void validator_handler(struct packet_sink *sink, struct net_buf *buf);
+
+/* Define validator sink with immediate execution */
+PACKET_SINK_DEFINE_IMMEDIATE(validator_sink, validator_handler);
 
 /* Statistics tracking */
 static uint32_t packets_validated;
@@ -61,7 +64,9 @@ static bool validate_packet_integrity(struct net_buf *buf)
 	last_sequence = header->sequence;
 
 	/* Validate content (check for expected patterns) */
+	/* Content is in the chained buffer after the header */
 	if (buf->frags) {
+		/* The content starts in the second buffer of the chain */
 		uint8_t first_byte = buf->frags->data[0];
 		uint8_t expected = (header->source_id == SOURCE_ID_SENSOR1) ? 0xA0 : 0xB0;
 		if (first_byte != expected) {
@@ -78,50 +83,47 @@ static bool validate_packet_integrity(struct net_buf *buf)
 	return true;
 }
 
-static void validator_thread_fn(void *p1, void *p2, void *p3)
+static void validator_handler(struct packet_sink *sink, struct net_buf *buf)
 {
-	struct net_buf *buf;
 	struct packet_header *header;
-	int ret;
+	static bool first_packet = true;
+	static uint32_t packets_received = 0;
 
-	ARG_UNUSED(p1);
-	ARG_UNUSED(p2);
-	ARG_UNUSED(p3);
+	packets_received++;
 
-	LOG_INF("Packet validator started");
-
-	while (1) {
-		/* Wait for packet to validate */
-		ret = k_msgq_get(&validator_sink.msgq, &buf, K_FOREVER);
-		if (ret != 0) {
-			continue;
-		}
-
-		header = (struct packet_header *)buf->data;
-
-		/* Validate packet */
-		if (validate_packet_integrity(buf)) {
-			packets_validated++;
-		} else {
-			packets_failed++;
-			LOG_ERR("INVALID: Sensor %d, Seq %d [Total failed: %d]",
-				header->source_id, header->sequence, packets_failed);
-		}
-
-		/* Clean up */
-		net_buf_unref(buf);
-
-		/* Report statistics every 10 packets (~2 seconds) */
-		if ((packets_validated + packets_failed) % 10 == 0) {
-			uint32_t total = packets_validated + packets_failed;
-			uint32_t rate = (packets_validated * 100) / total;
-			LOG_INF("Validator: Checked %d packets - Valid=%d, Failed=%d, Success rate=%d%%",
-				total, packets_validated, packets_failed, rate);
-		}
+	if (first_packet) {
+		LOG_INF("Packet validator started (immediate mode)");
+		first_packet = false;
 	}
+
+	/* Check if buffer has enough data for header */
+	if (buf->len < sizeof(struct packet_header)) {
+		LOG_ERR("Buffer too small for header: %d bytes", buf->len);
+		packets_failed++;
+		/* Buffer unref handled by framework */
+		return;
+	}
+
+	header = (struct packet_header *)buf->data;
+
+	/* Validate packet */
+	if (validate_packet_integrity(buf)) {
+		packets_validated++;
+		LOG_INF("VALID: Sensor %d, Seq %d, Type 0x%02x [Total valid: %d]",
+			header->source_id, header->sequence, header->packet_type, packets_validated);
+	} else {
+		packets_failed++;
+		LOG_ERR("INVALID: Sensor %d, Seq %d [Total failed: %d]",
+			header->source_id, header->sequence, packets_failed);
+	}
+
+	/* Report statistics with every packet */
+	uint32_t total = packets_validated + packets_failed;
+	uint32_t rate = (total > 0) ? (packets_validated * 100) / total : 0;
+	LOG_INF("Validator: Checked %d packets - Valid=%d, Failed=%d, Success rate=%d%%",
+		total, packets_validated, packets_failed, rate);
+
+	/* Buffer unref handled by framework */
 }
 
-/* Static thread initialization - starts automatically */
-K_THREAD_DEFINE(validator_thread, 2048,
-		validator_thread_fn, NULL, NULL, NULL,
-		6, 0, 0);
+/* No thread needed for immediate handler - executes in source context */

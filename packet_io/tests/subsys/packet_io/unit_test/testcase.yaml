@@ -5,3 +5,11 @@ tests:
       - native_sim
       - qemu_cortex_m3
     harness: ztest
+  packet_io.unit_test.no_stats:
+    tags: packet_io unit_test no_stats
+    integration_platforms:
+      - native_sim
+      - qemu_cortex_m3
+    harness: ztest
+    extra_configs:
+      - CONFIG_PACKET_IO_STATS=n

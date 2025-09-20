@@ -17,19 +17,66 @@ LOG_MODULE_REGISTER(processor, LOG_LEVEL_INF);
 /* Processor module's own buffer pool (small - only for headers) */
 NET_BUF_POOL_DEFINE(processor_pool, 16, sizeof(struct packet_header), 4, NULL);
 
-/* Define processor sink and source */
-PACKET_SINK_DEFINE(processor_sink, 10, false);  /* Queue 10 packets */
+/* Event queue for processor sink */
+PACKET_EVENT_QUEUE_DEFINE(processor_queue, 10);
+
+/* Handler for incoming packets */
+static void processor_handler(struct packet_sink *sink, struct net_buf *buf);
+
+/* Define processor sink with queued handler and source */
+PACKET_SINK_DEFINE_QUEUED(processor_sink, processor_handler, processor_queue);
 PACKET_SOURCE_DEFINE(processor_source);
 
 /* Sequence counter */
 static uint16_t sequence_counter;
 
+static void processor_handler(struct packet_sink *sink, struct net_buf *buf)
+{
+	struct net_buf *header_buf;
+	struct packet_header *header;
+	uint8_t source_id = 0;
+
+	/* Allocate buffer for header */
+	header_buf = net_buf_alloc(&processor_pool, K_NO_WAIT);
+	if (!header_buf) {
+		LOG_WRN("No buffer for header");
+		/* Buffer unref handled by framework */
+		return;
+	}
+
+	/* Determine source from packet data (first byte convention) */
+	if (buf->len > 0) {
+		source_id = (buf->data[0] == 0xA0) ? 1 : 2;
+	}
+
+	/* Calculate the original payload length before chaining */
+	uint16_t payload_len = buf->len;  /* Get length of single buffer */
+
+	/* Fill in header */
+	header = (struct packet_header *)net_buf_add(header_buf, sizeof(*header));
+	header->source_id = source_id;
+	header->packet_type = PACKET_TYPE_DATA;
+	header->sequence = sequence_counter++;
+	header->timestamp = k_uptime_get_32();
+	header->content_length = payload_len;  /* Set payload length */
+	header->reserved = 0;
+
+	/* Chain original data after header - frag_add takes ownership of buf */
+	/* Add reference since handler doesn't own the buffer it received */
+	buf = net_buf_ref(buf);
+	net_buf_frag_add(header_buf, buf);
+
+	/* Log the processing */
+	size_t total_len = net_buf_frags_len(header_buf);
+	LOG_INF("Processed from sensor %d, seq %u, total %zu bytes",
+		source_id, header->sequence, total_len);
+
+	/* Forward the packet with header to all connected sinks */
+	packet_source_send(&processor_source, header_buf, K_NO_WAIT);
+}
+
 static void processor_thread_fn(void *p1, void *p2, void *p3)
 {
-	struct net_buf *in_buf, *header_buf;
-	struct packet_header *header;
-	int ret;
-
 	ARG_UNUSED(p1);
 	ARG_UNUSED(p2);
 	ARG_UNUSED(p3);
@@ -37,46 +84,15 @@ static void processor_thread_fn(void *p1, void *p2, void *p3)
 	LOG_INF("Packet processor started");
 
 	while (1) {
-		/* Wait for incoming packet */
-		ret = k_msgq_get(&processor_sink.msgq, &in_buf, K_FOREVER);
-		if (ret != 0) {
-			continue;
+		/* Process events from the queue */
+		int ret = packet_event_process(&processor_queue, K_FOREVER);
+		if (ret != 0 && ret != -EAGAIN) {
+			LOG_ERR("Failed to process packet event: %d", ret);
 		}
-
-		/* Allocate buffer for header */
-		header_buf = net_buf_alloc(&processor_pool, K_NO_WAIT);
-		if (!header_buf) {
-			LOG_WRN("No buffer for header");
-			net_buf_unref(in_buf);
-			continue;
-		}
-
-		/* Reserve space and fill header */
-		header = net_buf_add(header_buf, sizeof(struct packet_header));
-		header->source_id = (in_buf->data[0] == 0xA0) ? SOURCE_ID_SENSOR1 : SOURCE_ID_SENSOR2;
-		header->packet_type = PACKET_TYPE_DATA;
-		header->sequence = sequence_counter++;
-		header->timestamp = k_uptime_get_32();
-		header->content_length = net_buf_frags_len(in_buf);  /* Calculate total payload length */
-		header->reserved = 0;
-
-		/* Chain original packet data to header buffer (zero-copy) */
-		net_buf_frag_add(header_buf, in_buf);
-
-		LOG_DBG("Processing packet from sensor %d, seq %d, header %d + payload %d bytes",
-			header->source_id, header->sequence,
-			header_buf->len, header->content_length);
-
-		/* Send chained packet to connected sinks using consume API */
-		/* This transfers ownership of header_buf to packet_io, no unref needed */
-		ret = packet_source_send_consume(&processor_source, header_buf, K_NO_WAIT);
-		LOG_DBG("Distributed to %d sinks", ret);
-
-		/* No cleanup needed - packet_source_send_consume took ownership */
 	}
 }
 
-/* Static thread initialization - starts automatically */
-K_THREAD_DEFINE(processor_thread, 2048,
+/* Auto-start processor thread */
+K_THREAD_DEFINE(processor_thread, 1024,
 		processor_thread_fn, NULL, NULL, NULL,
-		5, 0, 0);
+		7, 0, 0);

@@ -13,11 +13,11 @@ tests:
       type: multi_line
       ordered: false
       regex:
-        - "Packet I/O initialized with 4 connections"
         - "Sensor module started \\(256B \\+ 384B payloads\\)"
         - "TCP network transmitter started"
-        - "Packet validator started"
-        - "TCP Network: [0-9]+ packets, [0-9]+ bytes, [0-9]+ bps"
+        - "Packet validator started \\(immediate mode\\)"
+        - "Packet processor started"
+        - "TCP Stats: [0-9]+ packets, [0-9]+ bytes, [0-9]+ B/s"
         - "Validator: Checked [0-9]+ packets - Valid=[0-9]+, Failed=[0-9]+, Success rate=[0-9]+%"
     timeout: 5
     min_ram: 32

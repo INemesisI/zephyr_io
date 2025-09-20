@@ -31,32 +31,84 @@ extern "C" {
  * @{
  */
 
+/* ============================ Type Definitions ============================ */
+
+/* Forward declarations */
+struct packet_sink;
+struct packet_event_queue;
+
+/**
+ * @brief Packet handler callback signature
+ *
+ * @note The handler MUST NOT call net_buf_unref() on the buffer.
+ *       The framework automatically manages buffer references.
+ *
+ * @param sink The sink that received the packet
+ * @param buf The packet buffer (do not unref)
+ */
+typedef void (*packet_handler_t)(struct packet_sink *sink, struct net_buf *buf);
+
 /** @brief Packet source structure */
 struct packet_source {
+#ifdef CONFIG_PACKET_IO_NAMES
+	/** Name of the source */
+	const char *name;
+#endif
 	/** List of connections to sinks */
 	sys_dlist_t sinks;
 	/** Lock protecting the connection list */
 	struct k_spinlock lock;
 #ifdef CONFIG_PACKET_IO_STATS
-	/** Number of messages sent */
-	atomic_t msg_count;
-	/** Number of messages delivered to at least one sink */
-	atomic_t delivered_count;
+	/** Number of send operations attempted */
+	atomic_t send_count;
+	/** Total number of successful queue operations across all sinks */
+	atomic_t queued_total;
+#endif
+};
+
+/** @brief Packet event for queued delivery */
+struct packet_event {
+	/** Sink that received this packet */
+	struct packet_sink *sink;
+	/** The packet buffer */
+	struct net_buf *buf;
+};
+
+/** @brief Packet event queue for managing message queues */
+struct packet_event_queue {
+	/** Message queue for packet events */
+	struct k_msgq *msgq;
+#ifdef CONFIG_PACKET_IO_NAMES
+	/** Name of the queue */
+	const char *name;
+#endif
+#ifdef CONFIG_PACKET_IO_STATS
+	/** Number of events processed */
+	atomic_t processed_count;
 #endif
 };
 
 /** @brief Packet sink structure */
 struct packet_sink {
-	/** Message queue for received packets */
-	struct k_msgq msgq;
-	/** Buffer for message queue */
-	uint8_t *buffer;
-	/** Drop packets when queue is full */
-	bool drop_on_full;
+#ifdef CONFIG_PACKET_IO_NAMES
+	/** Name of the sink */
+	const char *name;
+#endif
+	/** Execution mode */
+	enum {
+		SINK_MODE_IMMEDIATE,  /**< Execute handler immediately in source context */
+		SINK_MODE_QUEUED,     /**< Queue for later processing */
+	} mode;
+	/** Handler function (used for IMMEDIATE and QUEUED modes) */
+	packet_handler_t handler;
+	/** User data passed to handler */
+	void *user_data;
+	/** Message queue for QUEUED mode */
+	struct k_msgq *msgq;
 #ifdef CONFIG_PACKET_IO_STATS
-	/** Number of packets received */
-	atomic_t received_count;
-	/** Number of packets dropped */
+	/** Number of packets handled by this sink */
+	atomic_t handled_count;
+	/** Number of packets dropped (queue full) */
 	atomic_t dropped_count;
 #endif
 };
@@ -71,14 +123,9 @@ struct packet_connection {
 	sys_dnode_t node;
 };
 
-/* Pointer wrapper structures for iterable sections */
-struct packet_source_ptr {
-	struct packet_source *ptr;
-};
+/* Only connections need to be in iterable sections for wiring at init time */
 
-struct packet_sink_ptr {
-	struct packet_sink *ptr;
-};
+/* ============================ Declaration Macros ============================ */
 
 /**
  * @brief Declare a packet source
@@ -90,6 +137,17 @@ struct packet_sink_ptr {
 #define PACKET_SOURCE_DECLARE(_name) extern struct packet_source _name
 
 /**
+ * @brief Declare a packet sink
+ *
+ * This macro declares an extern reference to a packet sink defined elsewhere.
+ *
+ * @param _name Name of the sink variable
+ */
+#define PACKET_SINK_DECLARE(_name) extern struct packet_sink _name
+
+/* ============================ Definition Macros ============================ */
+
+/**
  * @brief Define a packet source
  *
  * This macro defines and initializes a packet source. The source is
@@ -99,49 +157,100 @@ struct packet_sink_ptr {
  */
 #define PACKET_SOURCE_DEFINE(_name)                                           \
 	struct packet_source _name = {                                        \
+		IF_ENABLED(CONFIG_PACKET_IO_NAMES,                           \
+			   (.name = #_name,))                                \
 		.sinks = SYS_DLIST_STATIC_INIT(&_name.sinks),                \
 		.lock = {},                                                   \
 		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
-			   (.msg_count = ATOMIC_INIT(0),                     \
-			    .delivered_count = ATOMIC_INIT(0),))              \
-	};                                                                    \
-	static const STRUCT_SECTION_ITERABLE(packet_source_ptr,              \
-					      _name##_ptr) = { .ptr = &_name }
+			   (.send_count = ATOMIC_INIT(0),                    \
+			    .queued_total = ATOMIC_INIT(0)))              \
+	};
 
 /**
- * @brief Declare a packet sink
+ * @brief Define a message queue for packet events
  *
- * This macro declares an extern reference to a packet sink defined elsewhere.
+ * This macro defines a message queue specifically for packet events.
+ * Multiple sinks can share this queue for coordinated processing.
  *
- * @param _name Name of the sink variable
+ * @param _name Name of the event queue
+ * @param _size Maximum number of events in the queue
  */
-#define PACKET_SINK_DECLARE(_name) extern struct packet_sink _name
-
-/**
- * @brief Define a packet sink
- *
- * This macro defines and initializes a packet sink with an embedded
- * message queue. The sink is non-static so it can be referenced from other files.
- *
- * @param _name Name of the sink variable
- * @param _msg_count Maximum number of messages in the queue
- * @param _drop_on_full If true, drop new messages when queue is full
- */
-#define PACKET_SINK_DEFINE(_name, _msg_count, _drop_on_full)                  \
-	static char __aligned(4)                                              \
-		_name##_buffer[(_msg_count) * sizeof(struct net_buf *)];      \
-	struct packet_sink _name = {                                          \
-		.msgq = Z_MSGQ_INITIALIZER(_name.msgq, _name##_buffer,        \
-					    sizeof(struct net_buf *),         \
-					    _msg_count),                       \
-		.buffer = (uint8_t *)_name##_buffer,                          \
-		.drop_on_full = _drop_on_full,                                \
+#define PACKET_EVENT_QUEUE_DEFINE(_name, _size)                               \
+	K_MSGQ_DEFINE(_name##_msgq, sizeof(struct packet_event), _size, 4);   \
+	struct packet_event_queue _name = {                               \
+		.msgq = &_name##_msgq,                                        \
+		IF_ENABLED(CONFIG_PACKET_IO_NAMES,                           \
+			   (.name = #_name,))                                \
 		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
-			   (.received_count = ATOMIC_INIT(0),                \
-			    .dropped_count = ATOMIC_INIT(0),))               \
-	};                                                                    \
-	static const STRUCT_SECTION_ITERABLE(packet_sink_ptr,                \
-					      _name##_ptr) = { .ptr = &_name }
+			   (.processed_count = ATOMIC_INIT(0),))             \
+	}
+
+
+/**
+ * @brief Define a packet sink with immediate execution
+ *
+ * This macro defines a sink that executes its handler immediately
+ * in the source's context when a packet is received.
+ *
+ * @param _name Name of the sink variable
+ * @param _handler Handler function to call for each packet
+ */
+#define PACKET_SINK_DEFINE_IMMEDIATE(_name, _handler)                         \
+	struct packet_sink _name = {                                          \
+		IF_ENABLED(CONFIG_PACKET_IO_NAMES,                           \
+			   (.name = #_name,))                                \
+		.mode = SINK_MODE_IMMEDIATE,                                  \
+		.handler = _handler,                                           \
+		.user_data = NULL,                                             \
+		.msgq = NULL,                                                  \
+		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
+			   (.handled_count = ATOMIC_INIT(0),                 \
+			    .dropped_count = ATOMIC_INIT(0)))                \
+	};
+
+/**
+ * @brief Define a packet sink with queued execution
+ *
+ * This macro defines a sink that queues packets for later processing.
+ * The sink must be associated with a packet event queue.
+ *
+ * @param _name Name of the sink variable
+ * @param _handler Handler function to call for each packet
+ * @param _queue Pointer to packet_event_queue to use
+ */
+#define PACKET_SINK_DEFINE_QUEUED(_name, _handler, _queue)            \
+	struct packet_sink _name = {                                          \
+		IF_ENABLED(CONFIG_PACKET_IO_NAMES,                           \
+			   (.name = #_name,))                                \
+		.mode = SINK_MODE_QUEUED,                                     \
+		.handler = _handler,                                           \
+		.user_data = NULL,                                             \
+		.msgq = &(_queue##_msgq),                                     \
+		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
+			   (.handled_count = ATOMIC_INIT(0),                 \
+			    .dropped_count = ATOMIC_INIT(0)))                \
+	};
+
+/**
+ * @brief Define a packet sink with user data
+ *
+ * @param _name Name of the sink variable
+ * @param _handler Handler function to call for each packet
+ * @param _msgq Pointer to message queue (struct k_msgq*) or NULL for immediate execution
+ * @param _data User data to pass to handler
+ */
+#define PACKET_SINK_DEFINE_WITH_DATA(_name, _handler, _msgq, _data)  \
+	struct packet_sink _name = {                                          \
+		IF_ENABLED(CONFIG_PACKET_IO_NAMES,                           \
+			   (.name = #_name,))                                \
+		.mode = (_msgq) ? SINK_MODE_QUEUED : SINK_MODE_IMMEDIATE,     \
+		.handler = _handler,                                           \
+		.user_data = _data,                                            \
+		.msgq = _msgq,                                                 \
+		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
+			   (.handled_count = ATOMIC_INIT(0),                 \
+			    .dropped_count = ATOMIC_INIT(0)))                \
+	};
 
 /**
  * @brief Connect a source to a sink
@@ -158,6 +267,8 @@ struct packet_sink_ptr {
 		.source = &_source,                                           \
 		.sink = &_sink,                                               \
 	}
+
+/* ============================ Function APIs ============================ */
 
 /**
  * @brief Send a packet from source to all connected sinks
@@ -201,55 +312,85 @@ int packet_source_send(struct packet_source *src, struct net_buf *buf, k_timeout
  */
 int packet_source_send_consume(struct packet_source *src, struct net_buf *buf, k_timeout_t timeout);
 
+/**
+ * @brief Process a single event from a packet event queue
+ *
+ * This function retrieves and processes one packet event from the queue.
+ * The sink's handler is called with the packet, then the buffer is unreferenced.
+ *
+ * @param queue Pointer to the packet event queue
+ * @param timeout Maximum time to wait for an event
+ *
+ * @return 0 on success, -EAGAIN if no event available, negative errno on error
+ */
+int packet_event_process(struct packet_event_queue *queue, k_timeout_t timeout);
+
 #ifdef CONFIG_PACKET_IO_RUNTIME_OBSERVERS
 /**
- * @brief Add a sink to a source at runtime
+ * @brief Connect a source and sink at runtime
  *
- * @param src Pointer to the packet source
- * @param sink Pointer to the packet sink
+ * @note This function is only available when CONFIG_PACKET_IO_RUNTIME_OBSERVERS is enabled.
+ *
+ * The caller must provide a packet_connection structure with source
+ * and sink fields initialized. This structure must remain valid
+ * for as long as the connection exists.
+ *
+ * @warning The connection structure MUST be static or dynamically allocated,
+ *          NOT a stack variable. The structure is linked into the source's
+ *          connection list and must persist until removed.
+ *
+ * @param conn Pointer to connection structure with source/sink set
  *
  * @return 0 on success, negative errno on error
  */
-int packet_source_add_sink(struct packet_source *src,
-			    struct packet_sink *sink);
+int packet_connection_add(struct packet_connection *conn);
 
 /**
- * @brief Remove a sink from a source at runtime
+ * @brief Disconnect a runtime connection
  *
- * @param src Pointer to the packet source
- * @param sink Pointer to the packet sink
+ * @note This function is only available when CONFIG_PACKET_IO_RUNTIME_OBSERVERS is enabled.
+ *
+ * This removes the connection between source and sink. The connection
+ * structure can be freed or reused after this call returns.
+ *
+ * @param conn Pointer to the connection to remove
  *
  * @return 0 on success, negative errno on error
  */
-int packet_source_remove_sink(struct packet_source *src,
-			       struct packet_sink *sink);
+int packet_connection_remove(struct packet_connection *conn);
 #endif /* CONFIG_PACKET_IO_RUNTIME_OBSERVERS */
 
 #ifdef CONFIG_PACKET_IO_STATS
 /**
  * @brief Get source statistics
  *
+ * @note This function is only available when CONFIG_PACKET_IO_STATS is enabled.
+ *
  * @param src Pointer to the packet source
- * @param msg_count Output: number of messages sent (can be NULL)
- * @param delivered_count Output: number of successful deliveries (can be NULL)
+ * @param send_count Output: number of send operations attempted (can be NULL)
+ * @param queued_total Output: total successful queue operations across all sinks (can be NULL)
  */
 void packet_source_get_stats(struct packet_source *src,
-			      uint32_t *msg_count,
-			      uint32_t *delivered_count);
+			      uint32_t *send_count,
+			      uint32_t *queued_total);
 
 /**
  * @brief Get sink statistics
  *
+ * @note This function is only available when CONFIG_PACKET_IO_STATS is enabled.
+ *
  * @param sink Pointer to the packet sink
- * @param received_count Output: number of packets received (can be NULL)
+ * @param handled_count Output: number of packets handled (can be NULL)
  * @param dropped_count Output: number of packets dropped (can be NULL)
  */
 void packet_sink_get_stats(struct packet_sink *sink,
-			   uint32_t *received_count,
+			   uint32_t *handled_count,
 			   uint32_t *dropped_count);
 
 /**
  * @brief Reset source statistics
+ *
+ * @note This function is only available when CONFIG_PACKET_IO_STATS is enabled.
  *
  * @param src Pointer to the packet source
  */
@@ -257,6 +398,8 @@ void packet_source_reset_stats(struct packet_source *src);
 
 /**
  * @brief Reset sink statistics
+ *
+ * @note This function is only available when CONFIG_PACKET_IO_STATS is enabled.
  *
  * @param sink Pointer to the packet sink
  */

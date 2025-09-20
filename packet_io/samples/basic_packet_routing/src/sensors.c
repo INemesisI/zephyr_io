@@ -71,10 +71,9 @@ static void sensor_thread_fn(void *p1, void *p2, void *p3)
 		buf = net_buf_alloc(&sensor_pool, K_NO_WAIT);
 		if (buf) {
 			net_buf_add_mem(buf, sensor2_data, sizeof(sensor2_data));
-			ret = packet_source_send(&sensor2_source, buf, K_NO_WAIT);
+			ret = packet_source_send_consume(&sensor2_source, buf, K_NO_WAIT);
 			LOG_DBG("Sensor 2 sent %d bytes to %d sinks",
 				sizeof(sensor2_data), ret);
-			net_buf_unref(buf);
 		}
 
 		k_sleep(K_MSEC(200));  /* Faster data rate */

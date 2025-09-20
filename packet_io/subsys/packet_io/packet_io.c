@@ -13,9 +13,87 @@
 
 LOG_MODULE_REGISTER(packet_io, CONFIG_PACKET_IO_LOG_LEVEL);
 
-/* Declare the iterable section boundaries */
-STRUCT_SECTION_START_EXTERN(packet_connection);
-STRUCT_SECTION_END_EXTERN(packet_connection);
+/* Helper function to execute handler and manage buffer lifecycle */
+static int execute_handler(struct packet_sink *sink, struct net_buf *buf)
+{
+	/* Validate inputs */
+	if (!sink || !buf || !sink->handler) {
+		if (buf) {
+			net_buf_unref(buf);
+		}
+		return -EINVAL;
+	}
+
+	/* Validate buffer reference count */
+	if (buf->ref == 0) {
+		return -EINVAL;
+	}
+
+	/* Execute the handler */
+	sink->handler(sink, buf);
+
+#ifdef CONFIG_PACKET_IO_STATS
+	/* Update sink statistics */
+	atomic_inc(&sink->handled_count);
+#endif
+
+	/* Check that the buffer still has a reference before unreffing */
+	if (buf->ref == 0) {
+		/* This should never happen - handler modified ref count */
+		LOG_ERR("Buffer ref count is zero after handler execution!");
+		return -EFAULT;
+	}
+
+	net_buf_unref(buf);
+
+	return 0;
+}
+
+/* Helper to deliver packet to a single sink */
+static int deliver_to_sink(struct packet_sink *sink, struct net_buf *buf, k_timeout_t timeout)
+{
+	int ret = 0;
+
+	if (!sink || !buf) {
+		return -EINVAL;
+	}
+
+	struct net_buf *ref = net_buf_ref(buf);  /* Reference for the sink */
+
+	if (sink->mode == SINK_MODE_IMMEDIATE) {
+		/* Execute handler immediately in source context */
+		ret = execute_handler(sink, ref);
+	} else if (sink->mode == SINK_MODE_QUEUED) {
+		/* Queue packet event for later processing */
+		if (!sink->msgq) {
+			net_buf_unref(ref);
+			return -ENOSYS;
+		}
+		struct packet_event event = {
+			.sink = sink,
+			.buf = ref,
+		};
+
+		ret = k_msgq_put(sink->msgq, &event, timeout);
+		if (ret != 0) {
+			/* Failed to queue - clean up the buffer */
+			net_buf_unref(ref);
+#ifdef CONFIG_PACKET_IO_STATS
+			atomic_inc(&sink->dropped_count);
+#endif
+			/* Return more specific error code */
+			if (ret == -ENOMSG) {
+				return -ENOBUFS;
+			}
+		}
+	} else {
+		/* Unsupported mode */
+		net_buf_unref(ref);
+		return -ENOTSUP;
+	}
+
+	return ret;
+}
 
 int packet_source_send(struct packet_source *src, struct net_buf *buf, k_timeout_t timeout)
 {
@@ -24,61 +102,37 @@ int packet_source_send(struct packet_source *src, struct net_buf *buf, k_timeout
 	int delivered = 0;
 	k_timepoint_t end = sys_timepoint_calc(timeout);
 
-	/* Handle NULL parameters gracefully */
-	if (src == NULL || buf == NULL) {
-		return 0;
+	/* Validate parameters */
+	if (!src || !buf) {
+		return -EINVAL;
 	}
 
 #ifdef CONFIG_PACKET_IO_STATS
-	atomic_inc(&src->msg_count);
+	atomic_inc(&src->send_count);
 #endif
-
-	/* Fast path: no sinks */
-	if (sys_dlist_is_empty(&src->sinks)) {
-		LOG_DBG("Source %p has no sinks", src);
-		return 0;
-	}
 
 	key = k_spin_lock(&src->lock);
 
 	/* Send to each connected sink */
 	SYS_DLIST_FOR_EACH_CONTAINER(&src->sinks, conn, node) {
-		struct net_buf *buf_ptr = buf;
 		k_timeout_t remaining = sys_timepoint_timeout(end);
 
-		/* If timeout expired, try remaining sinks with K_NO_WAIT */
-		if (K_TIMEOUT_EQ(remaining, K_NO_WAIT) && !K_TIMEOUT_EQ(timeout, K_NO_WAIT)) {
-			remaining = K_NO_WAIT;
+		/* Skip if sink is invalid */
+		if (!conn->sink) {
+			continue;
 		}
-
-		/* Try sending with remaining timeout */
-		if (k_msgq_put(&conn->sink->msgq, &buf_ptr, remaining) == 0) {
-			/* Success - increment reference for this sink */
-			buf_ptr = net_buf_ref(buf);
+		/* Try delivering to this sink */
+		if (deliver_to_sink(conn->sink, buf, remaining) == 0) {
 			delivered++;
-#ifdef CONFIG_PACKET_IO_STATS
-			atomic_inc(&conn->sink->received_count);
-#endif
-			LOG_DBG("Delivered to sink %p", conn->sink);
-		} else if (conn->sink->drop_on_full) {
-			/* Drop silently */
-#ifdef CONFIG_PACKET_IO_STATS
-			atomic_inc(&conn->sink->dropped_count);
-#endif
-			LOG_DBG("Dropped for sink %p (queue full)", conn->sink);
-		} else {
-			LOG_WRN("Failed to deliver to sink %p (queue full, no drop)",
-				conn->sink);
 		}
 	}
 
 	k_spin_unlock(&src->lock, key);
 
 #ifdef CONFIG_PACKET_IO_STATS
-	atomic_add(&src->delivered_count, delivered);
+	atomic_add(&src->queued_total, delivered);
 #endif
 
-	LOG_DBG("Source %p delivered to %d sinks", src, delivered);
 	return delivered;
 }
 
@@ -86,40 +140,53 @@ int packet_source_send_consume(struct packet_source *src, struct net_buf *buf, k
 {
 	int ret;
 
+	/* Validate parameters */
+	if (!src || !buf) {
+		return -EINVAL;
+	}
+
+	/* Validate buffer has at least one reference */
+	if (buf->ref == 0) {
+		LOG_ERR("Buffer has zero reference count, cannot consume");
+		return -EINVAL;
+	}
+
 	/* Call the non-consuming version */
 	ret = packet_source_send(src, buf, timeout);
 
-	/* Always consume the caller's reference */
-	if (buf != NULL) {
-		net_buf_unref(buf);
-	}
+	/* Consume the caller's reference */
+	net_buf_unref(buf);
 
 	return ret;
 }
 
 #ifdef CONFIG_PACKET_IO_STATS
 void packet_source_get_stats(struct packet_source *src,
-			      uint32_t *msg_count,
-			      uint32_t *delivered_count)
+			      uint32_t *send_count,
+			      uint32_t *queued_total)
 {
-	__ASSERT_NO_MSG(src != NULL);
-
-	if (msg_count) {
-		*msg_count = atomic_get(&src->msg_count);
+	if (!src) {
+		return;
 	}
-	if (delivered_count) {
-		*delivered_count = atomic_get(&src->delivered_count);
+
+	if (send_count) {
+		*send_count = atomic_get(&src->send_count);
+	}
+	if (queued_total) {
+		*queued_total = atomic_get(&src->queued_total);
 	}
 }
 
 void packet_sink_get_stats(struct packet_sink *sink,
-			   uint32_t *received_count,
+			   uint32_t *handled_count,
 			   uint32_t *dropped_count)
 {
-	__ASSERT_NO_MSG(sink != NULL);
+	if (!sink) {
+		return;
+	}
 
-	if (received_count) {
-		*received_count = atomic_get(&sink->received_count);
+	if (handled_count) {
+		*handled_count = atomic_get(&sink->handled_count);
 	}
 	if (dropped_count) {
 		*dropped_count = atomic_get(&sink->dropped_count);
@@ -128,34 +195,73 @@ void packet_sink_get_stats(struct packet_sink *sink,
 
 void packet_source_reset_stats(struct packet_source *src)
 {
-	__ASSERT_NO_MSG(src != NULL);
+	if (!src) {
+		return;
+	}
 
-	atomic_clear(&src->msg_count);
-	atomic_clear(&src->delivered_count);
+	atomic_clear(&src->send_count);
+	atomic_clear(&src->queued_total);
 }
 
 void packet_sink_reset_stats(struct packet_sink *sink)
 {
-	__ASSERT_NO_MSG(sink != NULL);
+	if (!sink) {
+		return;
+	}
 
-	atomic_clear(&sink->received_count);
+	atomic_clear(&sink->handled_count);
 	atomic_clear(&sink->dropped_count);
 }
 #endif /* CONFIG_PACKET_IO_STATS */
+
+/* Process a single event from a packet event queue */
+int packet_event_process(struct packet_event_queue *queue, k_timeout_t timeout)
+{
+	struct packet_event event;
+	int ret;
+
+	if (!queue || !queue->msgq) {
+		return -EINVAL;
+	}
+
+	ret = k_msgq_get(queue->msgq, &event, timeout);
+	if (ret != 0) {
+		return -EAGAIN;  /* No event available */
+	}
+
+	/* Execute the handler using the common helper */
+	ret = execute_handler(event.sink, event.buf);
+	if (ret == 0) {
+#ifdef CONFIG_PACKET_IO_STATS
+		/* Only need to update queue stats, sink stats are handled in execute_handler */
+		atomic_inc(&queue->processed_count);
+#endif
+	}
+
+	return ret;
+}
 
 static int packet_io_init(void)
 {
 	int connection_count = 0;
 
-	LOG_INF("Initializing packet I/O");
+	LOG_DBG("Initializing packet I/O");
 
 	/* Walk all connections and wire them */
 	STRUCT_SECTION_FOREACH(packet_connection, conn) {
-		/* Skip dummy connection */
-		if (conn->source == NULL || conn->sink == NULL) {
+		/* Validate connection */
+		if (!conn->source || !conn->sink) {
+			LOG_ERR("Invalid static connection: source=%p, sink=%p",
+				conn->source, conn->sink);
 			continue;
 		}
-		
+
+		/* Verify node is not already in a list (defensive check) */
+		if (sys_dnode_is_linked(&conn->node)) {
+			LOG_ERR("Connection node already in use");
+			continue;
+		}
+
 		/* Add connection to source's list */
 		sys_dlist_append(&conn->source->sinks, &conn->node);
 		connection_count++;
@@ -164,7 +270,6 @@ static int packet_io_init(void)
 			conn->source, conn->sink);
 	}
 
-	LOG_INF("Packet I/O initialized with %d connections", connection_count);
 	return 0;
 }
 
