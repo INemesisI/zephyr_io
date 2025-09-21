@@ -1,121 +1,88 @@
-# Packet I/O - Zero-Copy Packet Distribution for Zephyr RTOS
+# Zephyr I/O - Advanced Communication Modules for Zephyr RTOS
 
 [![Zephyr Version](https://img.shields.io/badge/zephyr-v3.7.1-blue)](https://github.com/zephyrproject-rtos/zephyr)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-A high-performance, thread-safe, zero-copy packet distribution framework for Zephyr RTOS. Based on the **source/sink pattern**, sources (producers) send `net_buf` packets to multiple sinks (consumers) without data copying, using reference counting for efficient many-to-many communication. 
+A collection of high-performance, thread-safe communication and I/O modules for Zephyr RTOS, designed to bridge modern event-driven architectures with legacy protocols and enable efficient packet distribution systems.
 
-## 🚀 Features
+## 🔧 Modules
 
+### [Packet I/O](packet_io/) - Zero-Copy Packet Distribution
+
+A high-performance, zero-copy packet distribution framework based on the **source/sink pattern**. Sources (producers) send `net_buf` packets to multiple sinks (consumers) without data copying, using reference counting for efficient many-to-many communication.
+
+**Key Features:**
 - **Many-to-Many Routing**: Sources can send to multiple sinks, sinks can receive from multiple sources
-- **Flexible Execution Modes**: Immediate (in source context) or queued (deferred processing) handler based processing
+- **Flexible Execution Modes**: Immediate (in source context) or queued (deferred processing) handler execution
 - **Zero-Copy Distribution**: Efficient packet sharing using `net_buf` reference counting
 - **Protocol Packaging**: Chain buffers to add headers/footers without copying payload data
-- **Static & Runtime Wiring**: Compile-time connections for performance, runtime for flexibility
-- **Overflow Protection**: Automatic packet dropping when queues are full, with statistics tracking
 
-## 📋 Quick Start
+### [Register Mapper](register_mapper/) - Legacy Protocol Bridge
+
+A compile-time register mapping system that bridges external register-based interfaces (UART, Modbus, SPI) with internal ZBUS channels. Maps register addresses to specific fields within ZBUS message structures, enabling legacy protocols to interact seamlessly with modern event-driven architectures.
+
+**Key Features:**
+- **Static Mapping**: Register-to-channel mappings defined at compile time
+- **Type Safety**: Compile-time validation of field existence and type sizes
+- **Zero-Copy Access**: Direct read/write to ZBUS channel message buffers
+- **Event Notifications**: Automatic ZBUS notifications on register writes
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
 - Zephyr RTOS v3.7.1+
 - West build tool
+- Python virtual environment (for testing)
 
-### Basic Usage
-
-```c
-#include <zephyr/packet_io/packet_io.h>
-
-// Define a packet source
-PACKET_SOURCE_DEFINE(data_source);
-
-// Packet sink handler function for processing packets
-void process_handler(struct packet_sink *sink, struct net_buf *buf)
-{
-    LOG_INF("Received %d bytes", buf->len);
-    // Buffer is borrowed - DO NOT call net_buf_unref()
-}
-
-// Define immediate execution sink (runs in source thread context)
-PACKET_SINK_DEFINE_IMMEDIATE(immediate_sink, process_handler);
-
-// Or define packet event queue sink for deferred processing in another thread
-PACKET_EVENT_QUEUE_DEFINE(udp_queue, 32);  // 32 events max
-PACKET_SINK_DEFINE_QUEUED(queued_sink, process_handler, udp_queue);
-
-// Wire connections
-PACKET_SOURCE_CONNECT(data_source, immediate_sink);
-PACKET_SOURCE_CONNECT(data_source, queued_sink);
-
-// Send packets (runtime)
-packet_source_send(&data_source, buf, K_MSEC(100));
-```
-
-### Processing Thread for Queued Sinks
-
-```c
-// Processing thread for queued events
-void processor_thread(void)
-{
-    while (1) {
-        // Process events from the queue (will call the handler on evenet)
-        int ret = packet_event_process(&queued_sink, K_FOREVER);
-        if (ret != 0) {
-            LOG_ERR("Failed to process event: %d", ret);
-        }
-    }
-}
-```
-
-### Sample Application
-
-See `packet_io/samples/basic_packet_routing/` for a complete integration example demonstrating:
-- Multi-sensor data collection with event-driven processing
-- Zero-copy header addition in processor node
-- Distribution to multiple sinks with different execution modes
-- Packet validation with immediate handlers
-
-```
-Packet flow:
-  sensor1 ─┐                    ┌─→ TCP sink (queued processing)
-           ├─→ processor node ──┤
-  sensor2 ─┘    (adds header)   └─→ Validator (immediate execution)
-```
-
-## 🚧 Limitations
-
-- **Native buffer pools**: Designed for `net_buf` - other buffer types require adaptation
-- **Single packet per send**: No scatter-gather or batch operations
-- **Handler ownership**: Handlers receive borrowed buffers - must NOT call `net_buf_unref()`
-
-## 🛠️ Building and Testing
+### Environment Setup
 
 ```bash
-# Run all tests and sample
-ZEPHYR_EXTRA_MODULES=$PWD/packet_io \
-  python3 zephyr/scripts/twister \
-  -T packet_io -p native_sim -v -O twister-out --no-clean
+# Clone with submodules
+git clone --recursive https://github.com/your-org/zephyr_io.git
+cd zephyr_io
 
-# Build sample application
-ZEPHYR_EXTRA_MODULES=$PWD/packet_io \
-  west build -p always -b native_sim -d build_sample \
-  packet_io/samples/basic_packet_routing
-
-# Run sample
-./build_sample/zephyr/zephyr.exe
+# Set up Zephyr environment (if not already done)
+west init -l zephyr
+west update
 ```
 
-## 📖 Documentation
+### Building and Testing
 
-- **[User Guide](packet_io/doc/index.rst)**: Comprehensive documentation with concepts, usage patterns, and examples
-- **[API Reference](packet_io/include/zephyr/packet_io/packet_io.h)**: Function reference and detailed API documentation
-- **[Sample Code](packet_io/samples/)**: Complete integration examples
-- **[Test Suite](packet_io/tests/)**: Comprehensive unit and integration tests
+#### Run All Tests
+
+```bash
+# Activate virtual environment
+source zephyr/.venv/bin/activate
+
+# Run packet_io tests and samples
+ZEPHYR_EXTRA_MODULES=$PWD/packet_io \
+  west twister -T packet_io -p native_sim -v -O twister-out --no-clean
+
+# Run register_mapper tests
+ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
+  west twister -T register_mapper -p native_sim -v -O twister-out --no-clean
+```
+
+#### Code Coverage
+
+```bash
+# Activate virtual environment
+source zephyr/.venv/bin/activate
+
+# Generate coverage for packet_io
+ZEPHYR_EXTRA_MODULES=$PWD/packet_io \
+  west twister --coverage -p native_sim -T packet_io -v -O twister-coverage --no-clean
+
+# Generate coverage for register_mapper
+ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
+  west twister --coverage -p native_sim -T register_mapper -v -O twister-coverage --no-clean
+```
 
 ## 🤝 Contributing
 
 1. **Build Requirements**: Ensure Zephyr v3.7.1+ and Python virtual environment
-2. **Testing**: All tests must pass before submitting changes
+2. **Testing**: All module tests must pass before submitting changes
 3. **Code Style**: Follow Zephyr coding conventions
 4. **Documentation**: Update relevant documentation for API changes
 
