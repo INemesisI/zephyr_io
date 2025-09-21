@@ -1,0 +1,39 @@
+sample:
+  name: Register Mapper Device Configuration
+  description: |
+    Demonstrates the register mapper subsystem with sensor and motor
+    modules, UART protocol handler, and block write operations.
+
+tests:
+  sample.register_mapper.device_config:
+    platform_allow: native_sim
+    tags: register_mapper zbus
+    harness: console
+    harness_config:
+      type: multi_line
+      ordered: false
+      regex:
+        # Core initialization
+        - "Register mapper initialized successfully"
+        - "Register Mapper Sample Starting"
+        - "UART Protocol Demo"
+        # Register listing validation
+        - "Demo 1: Available registers"
+        - "reg_sensor_status"
+        - "reg_motor_status"
+        - "reg_sensor_control"
+        # Read operations
+        - "READ 0x1000 \\(reg_sensor_status\\): Success"
+        - "READ 0x1004 \\(reg_motor_status\\): Success"
+        # Write operations
+        - "WRITE 0x4000 \\(reg_sensor_control\\): Success"
+        - "WRITE 0x2012 \\(reg_motor_speed\\): Success"
+        # Block write
+        - "BLOCK WRITE: Starting transaction"
+        - "BLOCK WRITE: Committed successfully"
+        # Module updates
+        - "Sensor config updated"
+        - "Motor config changed"
+        # Completion
+        - "UART Demo Complete"
+        - "PROJECT EXECUTION SUCCESSFUL"

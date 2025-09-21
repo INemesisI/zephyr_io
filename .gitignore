@@ -6,10 +6,10 @@ twister-out.*/
 
 # West
 .west/
-modules/
-bootloader/
-tools/
-zephyr/
+./modules/
+./bootloader/
+./tools/
+./zephyr/
 
 # Python
 .venv/

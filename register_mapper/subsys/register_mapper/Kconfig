@@ -1,0 +1,55 @@
+# Copyright (c) 2024 Zephyr Project
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig REGISTER_MAPPER
+	bool "Enable distributed register mapper"
+	select ZBUS
+	help
+	  Enable the distributed register mapper subsystem that bridges
+	  external register-based interfaces to internal ZBUS channels.
+
+if REGISTER_MAPPER
+
+config REGISTER_MAPPER_INIT_PRIORITY
+	int "Initialization priority"
+	default 90
+	help
+	  System initialization priority for the register mapper.
+	  Should run after ZBUS initialization (70) but before
+	  application code.
+
+config REGISTER_MAPPER_BLOCK_WRITE
+	bool "Enable block write transactions"
+	default y
+	help
+	  Enable atomic block write operations for updating multiple
+	  registers as a single transaction with deferred notifications.
+
+config REGISTER_MAPPER_VALIDATION
+	bool "Enable register overlap validation"
+	default y if DEBUG
+	help
+	  Validate that no register addresses overlap at initialization.
+	  Useful for catching configuration errors.
+
+config REGISTER_MAPPER_MAX_REGISTERS
+	int "Maximum number of registers"
+	default 128
+	help
+	  Maximum number of register mappings supported.
+	  Used for static allocation in validation functions.
+
+config REGISTER_MAPPER_NAMES
+	bool "Enable register names"
+	default n
+	help
+	  Enable human-readable names for registers.
+	  When enabled, each register can have an optional name string
+	  that will be displayed in debug output and listings.
+	  Increases ROM usage by storing name strings.
+
+module = REGISTER_MAPPER
+module-str = register_mapper
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # REGISTER_MAPPER
