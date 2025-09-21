@@ -1,4 +1,4 @@
-name: Packet I/O Coverage
+name: Register Mapper Coverage
 
 # Run coverage on PRs, pushes to main/develop, and can be triggered manually
 on:
@@ -6,16 +6,16 @@ on:
     branches:
       - main
     paths:
-      - 'packet_io/**'
-      - '.github/workflows/coverage.yml'
+      - 'register_mapper/**'
+      - '.github/workflows/register_mapper_coverage.yml'
       - '.github/actions/setup-zephyr-modules/**'
   push:
     branches:
       - main
       - develop
     paths:
-      - 'packet_io/**'
-      - '.github/workflows/coverage.yml'
+      - 'register_mapper/**'
+      - '.github/workflows/register_mapper_coverage.yml'
       - '.github/actions/setup-zephyr-modules/**'
   workflow_dispatch:
 
@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   coverage:
-    name: Generate Packet I/O Coverage Report
+    name: Generate Register Mapper Coverage Report
     runs-on: ubuntu-latest
     container:
       image: zephyrprojectrtos/ci:v0.26.18
@@ -56,10 +56,11 @@ jobs:
         run: |
           source .venv/bin/activate
 
-          # Run all packet_io tests with coverage
+          # ZEPHYR_EXTRA_MODULES is already set by the setup action
+          # Run all register_mapper tests with coverage
           west twister \
             --coverage \
-            -T ../zephyr_io/packet_io/tests \
+            -T ../zephyr_io/register_mapper/tests \
             -p native_sim \
             -v \
             --inline-logs \
@@ -71,22 +72,22 @@ jobs:
         shell: bash
         run: |
           cd twister-coverage
-          # Only analyze packet_io module source code (not tests, samples, or other modules)
-          gcovr --filter=".*packet_io/subsys/packet_io/.*" \
+          # Only analyze register_mapper module source code (not tests, samples, or other modules)
+          gcovr --filter=".*register_mapper/subsys/register_mapper/.*" \
                 --xml coverage.xml \
                 --html-details coverage.html \
                 --print-summary .
           cd ..
 
-          # Also generate text summary for PR comment (packet_io module only)
-          gcovr --filter=".*packet_io/subsys/packet_io/.*" \
+          # Also generate text summary for PR comment (register_mapper module only)
+          gcovr --filter=".*register_mapper/subsys/register_mapper/.*" \
                 --print-summary twister-coverage > coverage-summary.txt
 
       - name: Upload Coverage Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Coverage Report
+          name: Register Mapper Coverage Report
           if-no-files-found: ignore
           path: |
             zephyr/twister-coverage/coverage.html
@@ -112,9 +113,9 @@ jobs:
             const branchCov = branchMatch ? parseFloat(branchMatch[1]) : 0;
 
             // Choose emoji based on line coverage
-            const emoji = lineCov >= 95 ? '🟢' : lineCov >= 90 ? '🟡' : '🔴';
+            const emoji = lineCov >= 90 ? '🟢' : lineCov >= 80 ? '🟡' : '🔴';
 
-            const comment = `## ${emoji} packet_io Module Coverage
+            const comment = `## ${emoji} register_mapper Module Coverage
 
             | Metric | Coverage |
             |--------|----------|
@@ -122,8 +123,8 @@ jobs:
             | **Functions** | ${funcCov.toFixed(1)}% |
             | **Branches** | ${branchCov.toFixed(1)}% |
 
-            > Coverage for \`packet_io/subsys/packet_io/\` only
-            > Minimum threshold: 90%`;
+            > Coverage for \`register_mapper/subsys/register_mapper/\` only
+            > Minimum threshold: 80%`;
 
             // Find existing comment or create new one
             const { data: comments } = await github.rest.issues.listComments({
@@ -134,7 +135,7 @@ jobs:
 
             const botComment = comments.find(comment =>
               comment.user.type === 'Bot' &&
-              comment.body.includes('packet_io Module Coverage')
+              comment.body.includes('register_mapper Module Coverage')
             );
 
             if (botComment) {
@@ -158,16 +159,16 @@ jobs:
         working-directory: zephyr
         shell: bash
         run: |
-          # Extract coverage percentage for packet_io module only
-          LINE_COV=$(gcovr --filter=".*packet_io/subsys/packet_io/.*" --print-summary twister-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
+          # Extract coverage percentage for register_mapper module only
+          LINE_COV=$(gcovr --filter=".*register_mapper/subsys/register_mapper/.*" --print-summary twister-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
 
-          # Set minimum coverage threshold for packet_io module
-          MIN_COVERAGE=90
+          # Set minimum coverage threshold for register_mapper module
+          MIN_COVERAGE=80
 
           # Compare coverage with threshold
           if (( $(echo "$LINE_COV < $MIN_COVERAGE" | bc -l) )); then
-            echo "❌ Coverage check failed for packet_io module: $LINE_COV% is below minimum threshold of $MIN_COVERAGE%"
+            echo "❌ Coverage check failed for register_mapper module: $LINE_COV% is below minimum threshold of $MIN_COVERAGE%"
             exit 1
           else
-            echo "✅ Coverage check passed for packet_io module: $LINE_COV% meets minimum threshold of $MIN_COVERAGE%"
+            echo "✅ Coverage check passed for register_mapper module: $LINE_COV% meets minimum threshold of $MIN_COVERAGE%"
           fi

@@ -1,4 +1,4 @@
-name: Packet I/O Tests
+name: Register Mapper Tests
 
 # Run tests on PRs, pushes to main, and can be triggered manually
 on:
@@ -6,15 +6,15 @@ on:
     branches:
       - main
     paths:
-      - 'packet_io/**'
-      - '.github/workflows/packet_io_tests.yml'
+      - 'register_mapper/**'
+      - '.github/workflows/register_mapper_tests.yml'
       - '.github/actions/setup-zephyr-modules/**'
   push:
     branches:
       - main
     paths:
-      - 'packet_io/**'
-      - '.github/workflows/packet_io_tests.yml'
+      - 'register_mapper/**'
+      - '.github/workflows/register_mapper_tests.yml'
       - '.github/actions/setup-zephyr-modules/**'
   workflow_dispatch:
 
@@ -30,8 +30,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  packet_io_tests:
-    name: Run Packet I/O Tests
+  register_mapper_tests:
+    name: Run Register Mapper Tests
     runs-on: ubuntu-latest
     container:
       image: zephyrprojectrtos/ci:v0.26.18
@@ -49,15 +49,16 @@ jobs:
           setup-python-env: 'true'  # This container needs Python setup
           install-coverage-tools: 'false'
 
-      - name: Run Packet I/O Tests with Twister
+      - name: Run Register Mapper Tests with Twister
         working-directory: zephyr
         shell: bash
         run: |
           source .venv/bin/activate
 
-          # Run all packet_io tests and samples
+          # ZEPHYR_EXTRA_MODULES is already set by the setup action
+          # Just run the tests
           west twister \
-            -T ../zephyr_io/packet_io \
+            -T ../zephyr_io/register_mapper \
             -p native_sim \
             -v \
             --inline-logs \
@@ -69,7 +70,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Packet IO Test Results
+          name: Register Mapper Test Results
           if-no-files-found: ignore
           path: |
             zephyr/twister-out/twister.xml
@@ -79,6 +80,6 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
-          check_name: Packet I/O Test Results
+          check_name: Register Mapper Test Results
           files: "**/twister.xml"
           comment_mode: off
