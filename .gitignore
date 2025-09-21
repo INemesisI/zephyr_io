@@ -35,3 +35,6 @@ __pycache__/
 # Documentation build
 docs/_build/
 docs/doxygen/
+
+# Local scripts (not tracked)
+scripts/
