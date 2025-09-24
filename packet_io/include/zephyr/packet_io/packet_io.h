@@ -253,20 +253,28 @@ struct packet_connection {
 	};
 
 /**
- * @brief Connect a source to a sink
+ * @brief Connect a packet source to a packet sink
  *
  * This macro creates a static connection between a source and a sink.
  * The connection is established during system initialization.
  *
- * @param _source Source variable name
- * @param _sink Sink variable name
+ * @param _source_ptr Pointer to the packet source
+ * @param _sink_ptr Pointer to the packet sink
+ *
+ * Example usage:
+ *   PACKET_CONNECT(&my_source, &my_sink);
+ *   PACKET_CONNECT(&router.network_outbound, &tcp_sink);
  */
-#define PACKET_SOURCE_CONNECT(_source, _sink)                                 \
+#define PACKET_CONNECT(_source_ptr, _sink_ptr)                                \
 	static STRUCT_SECTION_ITERABLE(packet_connection,                     \
-					__connection_##_source##_##_sink) = { \
-		.source = &_source,                                           \
-		.sink = &_sink,                                               \
+					CONCAT(__connection_, __COUNTER__)) = {       \
+		.source = (_source_ptr),                                      \
+		.sink = (_sink_ptr),                                           \
 	}
+
+/* Legacy macro for backward compatibility - will be deprecated */
+#define PACKET_SOURCE_CONNECT(_source, _sink)                                 \
+	PACKET_CONNECT(&_source, &_sink)
 
 /* ============================ Function APIs ============================ */
 

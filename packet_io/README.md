@@ -44,8 +44,8 @@ PACKET_EVENT_QUEUE_DEFINE(udp_queue, 32);  // 32 events max
 PACKET_SINK_DEFINE_QUEUED(queued_sink, process_handler, udp_queue);
 
 // Wire connections
-PACKET_SOURCE_CONNECT(data_source, immediate_sink);
-PACKET_SOURCE_CONNECT(data_source, queued_sink);
+PACKET_CONNECT(&data_source, &immediate_sink);
+PACKET_CONNECT(&data_source, &queued_sink);
 
 // Send packets (runtime)
 packet_source_send(&data_source, buf, K_MSEC(100));

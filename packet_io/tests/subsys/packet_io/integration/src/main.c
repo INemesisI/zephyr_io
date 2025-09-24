@@ -217,21 +217,21 @@ PACKET_SOURCE_DEFINE(perf_source3);
 PACKET_SINK_DEFINE_QUEUED(perf_sink, perf_handler, perf_queue);
 
 /* Wire connections */
-PACKET_SOURCE_CONNECT(eth_rx_source, packet_filter_sink);
-PACKET_SOURCE_CONNECT(eth_rx_source, packet_logger_sink);
-PACKET_SOURCE_CONNECT(eth_tx_source, packet_router_sink);
-PACKET_SOURCE_CONNECT(eth_tx_source, packet_logger_sink);
+PACKET_CONNECT(&eth_rx_source, &packet_filter_sink);
+PACKET_CONNECT(&eth_rx_source, &packet_logger_sink);
+PACKET_CONNECT(&eth_tx_source, &packet_router_sink);
+PACKET_CONNECT(&eth_tx_source, &packet_logger_sink);
 
-PACKET_SOURCE_CONNECT(stream_producer, stream_consumer1);
-PACKET_SOURCE_CONNECT(stream_producer, stream_consumer2);
-PACKET_SOURCE_CONNECT(stream_producer, stream_buffer);
+PACKET_CONNECT(&stream_producer, &stream_consumer1);
+PACKET_CONNECT(&stream_producer, &stream_consumer2);
+PACKET_CONNECT(&stream_producer, &stream_buffer);
 
-PACKET_SOURCE_CONNECT(bulk_source, bulk_processor);
-PACKET_SOURCE_CONNECT(bulk_source, bulk_storage);
+PACKET_CONNECT(&bulk_source, &bulk_processor);
+PACKET_CONNECT(&bulk_source, &bulk_storage);
 
-PACKET_SOURCE_CONNECT(perf_source1, perf_sink);
-PACKET_SOURCE_CONNECT(perf_source2, perf_sink);
-PACKET_SOURCE_CONNECT(perf_source3, perf_sink);
+PACKET_CONNECT(&perf_source1, &perf_sink);
+PACKET_CONNECT(&perf_source2, &perf_sink);
+PACKET_CONNECT(&perf_source3, &perf_sink);
 
 /*
  * ===========================================================================

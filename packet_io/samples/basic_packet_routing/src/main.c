@@ -23,10 +23,10 @@
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
 /* Wire up the connections at compile time */
-PACKET_SOURCE_CONNECT(sensor1_source, processor_sink);
-PACKET_SOURCE_CONNECT(sensor2_source, processor_sink);
-PACKET_SOURCE_CONNECT(processor_source, tcp_sink);
-PACKET_SOURCE_CONNECT(processor_source, validator_sink);
+PACKET_CONNECT(&sensor1_source, &processor_sink);
+PACKET_CONNECT(&sensor2_source, &processor_sink);
+PACKET_CONNECT(&processor_source, &tcp_sink);
+PACKET_CONNECT(&processor_source, &validator_sink);
 
 int main(void)
 {

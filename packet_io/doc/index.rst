@@ -149,8 +149,8 @@ The Packet I/O system provides a handler-based API with flexible execution modes
     PACKET_SINK_DEFINE_QUEUED(my_sink_queued, my_handler, my_queue);
 
     /* Connect source to sinks at compile time */
-    PACKET_SOURCE_CONNECT(my_source, my_sink_immediate);
-    PACKET_SOURCE_CONNECT(my_source, my_sink_queued);
+    PACKET_CONNECT(&my_source, &my_sink_immediate);
+    PACKET_CONNECT(&my_source, &my_sink_queued);
 
     /* Send packet at runtime */
     packet_source_send(&my_source, buf, K_NO_WAIT);           /* Preserve reference */
@@ -260,7 +260,7 @@ Static connections are established using :c:macro:`PACKET_SOURCE_CONNECT`:
     /* Single file - direct connection */
     PACKET_SOURCE_DEFINE(my_source);
     PACKET_SINK_DEFINE_IMMEDIATE(my_sink, handler);
-    PACKET_SOURCE_CONNECT(my_source, my_sink);
+    PACKET_CONNECT(&my_source, &my_sink);
 
     /* Modular design - components define their own sources/sinks */
     /* sensor.c - Sensor module */
@@ -278,13 +278,13 @@ Static connections are established using :c:macro:`PACKET_SOURCE_CONNECT`:
     PACKET_SINK_DECLARE(logger_sink);       /* From logger.c */
 
     /* Application decides how modules connect */
-    PACKET_SOURCE_CONNECT(sensor_source, network_sink);
-    PACKET_SOURCE_CONNECT(sensor_source, logger_sink);
+    PACKET_CONNECT(&sensor_source, &network_sink);
+    PACKET_CONNECT(&sensor_source, &logger_sink);
 
     /* Multiple connections from one source */
-    PACKET_SOURCE_CONNECT(sensor_source, sink1);
-    PACKET_SOURCE_CONNECT(sensor_source, sink2);
-    PACKET_SOURCE_CONNECT(sensor_source, sink3);
+    PACKET_CONNECT(&sensor_source, &sink1);
+    PACKET_CONNECT(&sensor_source, &sink2);
+    PACKET_CONNECT(&sensor_source, &sink3);
 
 **Runtime Connections**
 
@@ -500,17 +500,17 @@ A common pattern for distributing sensor data to multiple consumers:
     PACKET_SINK_DEFINE_QUEUED(network_sink, network_handler, network_queue);
 
     /* All sensors to fusion algorithm */
-    PACKET_SOURCE_CONNECT(accel_source, fusion_sink);
-    PACKET_SOURCE_CONNECT(gyro_source, fusion_sink);
-    PACKET_SOURCE_CONNECT(mag_source, fusion_sink);
+    PACKET_CONNECT(&accel_source, &fusion_sink);
+    PACKET_CONNECT(&gyro_source, &fusion_sink);
+    PACKET_CONNECT(&mag_source, &fusion_sink);
 
     /* All sensors to logger */
-    PACKET_SOURCE_CONNECT(accel_source, logger_sink);
-    PACKET_SOURCE_CONNECT(gyro_source, logger_sink);
-    PACKET_SOURCE_CONNECT(mag_source, logger_sink);
+    PACKET_CONNECT(&accel_source, &logger_sink);
+    PACKET_CONNECT(&gyro_source, &logger_sink);
+    PACKET_CONNECT(&mag_source, &logger_sink);
 
     /* Only accelerometer to network (bandwidth limited) */
-    PACKET_SOURCE_CONNECT(accel_source, network_sink);
+    PACKET_CONNECT(&accel_source, &network_sink);
 
 Router Pattern
 ==============
@@ -554,9 +554,9 @@ Implementing a packet router that distributes based on packet type:
     PACKET_SINK_DECLARE(udp_handler);
     PACKET_SINK_DECLARE(raw_handler);
 
-    PACKET_SOURCE_CONNECT(tcp_output, tcp_handler);
-    PACKET_SOURCE_CONNECT(udp_output, udp_handler);
-    PACKET_SOURCE_CONNECT(raw_output, raw_handler);
+    PACKET_CONNECT(&tcp_output, &tcp_handler);
+    PACKET_CONNECT(&udp_output, &udp_handler);
+    PACKET_CONNECT(&raw_output, &raw_handler);
 
     void router_thread(void)
     {

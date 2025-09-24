@@ -114,20 +114,20 @@ static void init_sinks(void)
 
 /* Define connections */
 /* source1 -> sink1, sink2, immediate_sink */
-PACKET_SOURCE_CONNECT(source1, sink1);
-PACKET_SOURCE_CONNECT(source1, sink2);
-PACKET_SOURCE_CONNECT(source1, immediate_sink);
+PACKET_CONNECT(&source1, &sink1);
+PACKET_CONNECT(&source1, &sink2);
+PACKET_CONNECT(&source1, &immediate_sink);
 
 /* source2 -> sink1, sink3 */
-PACKET_SOURCE_CONNECT(source2, sink1);
-PACKET_SOURCE_CONNECT(source2, sink3);
+PACKET_CONNECT(&source2, &sink1);
+PACKET_CONNECT(&source2, &sink3);
 
 /* source3 -> sink2, sink3 */
-PACKET_SOURCE_CONNECT(source3, sink2);
-PACKET_SOURCE_CONNECT(source3, sink3);
+PACKET_CONNECT(&source3, &sink2);
+PACKET_CONNECT(&source3, &sink3);
 
 /* isolated_source has no connections */
-PACKET_SOURCE_CONNECT(queue_test_source, sink1);
+PACKET_CONNECT(&queue_test_source, &sink1);
 
 /* =============================================================================
  * Helper Functions
