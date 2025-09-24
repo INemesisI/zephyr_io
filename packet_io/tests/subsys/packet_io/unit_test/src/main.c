@@ -1862,6 +1862,211 @@ ZTEST(packet_io_unit_test, test_chaining_double_unref_bug)
 	sys_dlist_remove(&conn.node);
 }
 
+/* Test packet_sink_deliver public API */
+ZTEST(packet_io_unit_test, test_packet_sink_deliver_immediate)
+{
+	/* Test immediate mode delivery */
+	struct packet_sink sink = {
+		.mode = SINK_MODE_IMMEDIATE,
+		.handler = immediate_handler,
+	};
+
+	struct net_buf *buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+
+	/* Store initial reference count */
+	uint8_t initial_ref = buf->ref;
+	atomic_clear(&immediate_count);
+
+	/* Deliver packet to sink */
+	int ret = packet_sink_deliver(&sink, buf, K_NO_WAIT);
+	zassert_equal(ret, 0, "packet_sink_deliver should succeed");
+
+	/* Verify handler was called */
+	zassert_equal(atomic_get(&immediate_count), 1, "Handler should have been called");
+
+	/* Verify buffer reference is unchanged (function doesn't consume caller's ref) */
+	zassert_equal(buf->ref, initial_ref, "Buffer reference should be preserved");
+
+	net_buf_unref(buf);
+}
+
+/* Message queue for queued delivery tests */
+K_MSGQ_DEFINE(deliver_test_msgq, sizeof(struct packet_event), 4, 4);
+
+ZTEST(packet_io_unit_test, test_packet_sink_deliver_queued)
+{
+	/* Test queued mode delivery */
+	k_msgq_purge(&deliver_test_msgq);
+
+	struct packet_sink sink = {
+		.mode = SINK_MODE_QUEUED,
+		.handler = immediate_handler,
+		.msgq = &deliver_test_msgq,
+	};
+
+	struct net_buf *buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+
+	/* Store initial reference count */
+	uint8_t initial_ref = buf->ref;
+
+	/* Deliver packet to sink */
+	int ret = packet_sink_deliver(&sink, buf, K_NO_WAIT);
+	zassert_equal(ret, 0, "packet_sink_deliver should succeed");
+
+	/* Verify event was queued */
+	struct packet_event event;
+	ret = k_msgq_get(&deliver_test_msgq, &event, K_NO_WAIT);
+	zassert_equal(ret, 0, "Event should be in queue");
+	zassert_equal(event.sink, &sink, "Event should have correct sink");
+	zassert_equal(event.buf, buf, "Event should have correct buffer");
+
+	/* Verify buffer reference count increased (queued copy) */
+	zassert_equal(buf->ref, initial_ref + 1, "Buffer ref should increase for queued event");
+
+	/* Clean up */
+	net_buf_unref(event.buf);  /* From queue */
+	net_buf_unref(buf);  /* Our original reference */
+}
+
+ZTEST(packet_io_unit_test, test_packet_sink_deliver_invalid_params)
+{
+	struct packet_sink sink = {
+		.mode = SINK_MODE_IMMEDIATE,
+		.handler = immediate_handler,
+	};
+	struct net_buf *buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+
+	/* Test NULL sink */
+	int ret = packet_sink_deliver(NULL, buf, K_NO_WAIT);
+	zassert_equal(ret, -EINVAL, "Should return -EINVAL for NULL sink");
+
+	/* Test NULL buffer */
+	ret = packet_sink_deliver(&sink, NULL, K_NO_WAIT);
+	zassert_equal(ret, -EINVAL, "Should return -EINVAL for NULL buffer");
+
+	/* Test queued mode without message queue */
+	struct packet_sink bad_sink = {
+		.mode = SINK_MODE_QUEUED,
+		.handler = immediate_handler,
+		.msgq = NULL,  /* No queue configured */
+	};
+	ret = packet_sink_deliver(&bad_sink, buf, K_NO_WAIT);
+	zassert_equal(ret, -ENOSYS, "Should return -ENOSYS for queued mode without queue");
+
+	net_buf_unref(buf);
+}
+
+/* Small message queue for queue full test */
+K_MSGQ_DEFINE(deliver_small_msgq, sizeof(struct packet_event), 1, 4);
+
+ZTEST(packet_io_unit_test, test_packet_sink_deliver_queue_full)
+{
+	/* Test behavior when queue is full */
+	k_msgq_purge(&deliver_small_msgq);
+
+	struct packet_sink sink = {
+		.mode = SINK_MODE_QUEUED,
+		.handler = immediate_handler,
+		.msgq = &deliver_small_msgq,
+	};
+
+	struct net_buf *buf1 = net_buf_alloc(&test_pool, K_NO_WAIT);
+	struct net_buf *buf2 = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf1, "Failed to allocate buffer 1");
+	zassert_not_null(buf2, "Failed to allocate buffer 2");
+
+	/* First delivery should succeed */
+	int ret = packet_sink_deliver(&sink, buf1, K_NO_WAIT);
+	zassert_equal(ret, 0, "First delivery should succeed");
+
+	/* Second delivery should fail with queue full */
+	ret = packet_sink_deliver(&sink, buf2, K_NO_WAIT);
+	zassert_equal(ret, -ENOBUFS, "Should return -ENOBUFS when queue is full");
+
+	/* Clean up */
+	struct packet_event event;
+	k_msgq_get(&deliver_small_msgq, &event, K_NO_WAIT);
+	net_buf_unref(event.buf);
+	net_buf_unref(buf1);
+	net_buf_unref(buf2);
+}
+
+/* Test packet_sink_deliver_consume public API */
+ZTEST(packet_io_unit_test, test_packet_sink_deliver_consume_immediate)
+{
+	/* Test immediate mode delivery with consume */
+	struct packet_sink sink = {
+		.mode = SINK_MODE_IMMEDIATE,
+		.handler = immediate_handler,
+	};
+
+	struct net_buf *buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+
+	atomic_clear(&immediate_count);
+
+	/* Deliver packet to sink (consumes buffer) */
+	int ret = packet_sink_deliver_consume(&sink, buf, K_NO_WAIT);
+	zassert_equal(ret, 0, "packet_sink_deliver_consume should succeed");
+
+	/* Verify handler was called */
+	zassert_equal(atomic_get(&immediate_count), 1, "Handler should have been called");
+
+	/* Buffer is consumed, no need to unref */
+}
+
+ZTEST(packet_io_unit_test, test_packet_sink_deliver_consume_queued)
+{
+	/* Test queued mode delivery with consume */
+	k_msgq_purge(&deliver_test_msgq);
+
+	struct packet_sink sink = {
+		.mode = SINK_MODE_QUEUED,
+		.handler = immediate_handler,
+		.msgq = &deliver_test_msgq,
+	};
+
+	struct net_buf *buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+
+	/* Deliver packet to sink (consumes buffer) */
+	int ret = packet_sink_deliver_consume(&sink, buf, K_NO_WAIT);
+	zassert_equal(ret, 0, "packet_sink_deliver_consume should succeed");
+
+	/* Verify event was queued */
+	struct packet_event event;
+	ret = k_msgq_get(&deliver_test_msgq, &event, K_NO_WAIT);
+	zassert_equal(ret, 0, "Event should be in queue");
+	zassert_equal(event.sink, &sink, "Event should have correct sink");
+	zassert_equal(event.buf, buf, "Event should have correct buffer");
+
+	/* Clean up - only need to unref the queued buffer */
+	net_buf_unref(event.buf);
+}
+
+ZTEST(packet_io_unit_test, test_packet_sink_deliver_consume_invalid)
+{
+	struct packet_sink sink = {
+		.mode = SINK_MODE_IMMEDIATE,
+		.handler = immediate_handler,
+	};
+
+	/* Test NULL sink - should return error and consume buffer */
+	struct net_buf *buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to allocate buffer");
+
+	int ret = packet_sink_deliver_consume(NULL, buf, K_NO_WAIT);
+	zassert_equal(ret, -EINVAL, "Should return -EINVAL for NULL sink");
+	/* Buffer is consumed even on error */
+
+	/* Test NULL buffer */
+	ret = packet_sink_deliver_consume(&sink, NULL, K_NO_WAIT);
+	zassert_equal(ret, -EINVAL, "Should return -EINVAL for NULL buffer");
+}
+
 
 
 

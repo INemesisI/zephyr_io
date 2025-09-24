@@ -49,8 +49,7 @@ static int execute_handler(struct packet_sink *sink, struct net_buf *buf)
 	return 0;
 }
 
-/* Helper to deliver packet to a single sink */
-static int deliver_to_sink(struct packet_sink *sink, struct net_buf *buf, k_timeout_t timeout)
+int packet_sink_deliver(struct packet_sink *sink, struct net_buf *buf, k_timeout_t timeout)
 {
 	int ret = 0;
 
@@ -95,6 +94,17 @@ static int deliver_to_sink(struct packet_sink *sink, struct net_buf *buf, k_time
 	return ret;
 }
 
+int packet_sink_deliver_consume(struct packet_sink *sink, struct net_buf *buf, k_timeout_t timeout)
+{
+	if (!buf) {
+		return packet_sink_deliver(sink, NULL, timeout);
+	}
+
+	int ret = packet_sink_deliver(sink, buf, timeout);
+	net_buf_unref(buf);
+	return ret;
+}
+
 int packet_source_send(struct packet_source *src, struct net_buf *buf, k_timeout_t timeout)
 {
 	k_spinlock_key_t key;
@@ -122,7 +132,7 @@ int packet_source_send(struct packet_source *src, struct net_buf *buf, k_timeout
 			continue;
 		}
 		/* Try delivering to this sink */
-		if (deliver_to_sink(conn->sink, buf, remaining) == 0) {
+		if (packet_sink_deliver(conn->sink, buf, remaining) == 0) {
 			delivered++;
 		}
 	}

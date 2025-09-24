@@ -333,6 +333,56 @@ int packet_source_send_consume(struct packet_source *src, struct net_buf *buf, k
  */
 int packet_event_process(struct packet_event_queue *queue, k_timeout_t timeout);
 
+/**
+ * @brief Deliver a packet directly to a sink
+ *
+ * This function delivers a packet to a single sink, handling both IMMEDIATE
+ * and QUEUED execution modes. For IMMEDIATE mode, the handler is called
+ * directly. For QUEUED mode, the packet event is placed in the sink's
+ * message queue.
+ *
+ * The function takes a new reference to the buffer for the sink, so the caller's
+ * reference is preserved (NOT consumed). The caller must still unref their buffer
+ * after calling this function. The sink's handler should NOT call net_buf_unref()
+ * as the framework manages buffer references.
+ *
+ * @param sink Pointer to the packet sink
+ * @param buf Pointer to the net_buf to deliver (reference is NOT consumed)
+ * @param timeout Maximum time to wait for queuing (only used for QUEUED mode)
+ *
+ * @return 0 on success, negative errno on error:
+ *         -EINVAL if sink or buf is NULL
+ *         -ENOSYS if QUEUED mode but no message queue configured
+ *         -ENOBUFS if message queue is full
+ *         -ENOTSUP if sink mode is invalid
+ */
+int packet_sink_deliver(struct packet_sink *sink, struct net_buf *buf, k_timeout_t timeout);
+
+/**
+ * @brief Deliver a packet directly to a sink (consuming reference)
+ *
+ * This function delivers a packet to a single sink, handling both IMMEDIATE
+ * and QUEUED execution modes. For IMMEDIATE mode, the handler is called
+ * directly. For QUEUED mode, the packet event is placed in the sink's
+ * message queue.
+ *
+ * This function CONSUMES the caller's reference to the buffer. The caller
+ * should NOT unref the buffer after calling this function. This is more
+ * efficient than packet_sink_deliver() when the caller doesn't need the
+ * buffer after delivery, as it avoids an extra ref/unref cycle.
+ *
+ * @param sink Pointer to the packet sink
+ * @param buf Pointer to the net_buf to deliver (reference IS consumed)
+ * @param timeout Maximum time to wait for queuing (only used for QUEUED mode)
+ *
+ * @return 0 on success, negative errno on error:
+ *         -EINVAL if sink or buf is NULL
+ *         -ENOSYS if QUEUED mode but no message queue configured
+ *         -ENOBUFS if message queue is full
+ *         -ENOTSUP if sink mode is invalid
+ */
+int packet_sink_deliver_consume(struct packet_sink *sink, struct net_buf *buf, k_timeout_t timeout);
+
 #ifdef CONFIG_PACKET_IO_RUNTIME_OBSERVERS
 /**
  * @brief Connect a source and sink at runtime
