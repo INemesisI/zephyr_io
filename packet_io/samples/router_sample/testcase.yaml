@@ -1,0 +1,18 @@
+tests:
+  packet_io.samples.router_tcp:
+    tags:
+      - packet_io
+      - samples
+      - tcp
+      - router
+      - pytest
+    harness: pytest
+    harness_config:
+      pytest_root:
+        - "pytest/test_router_tcp.py"
+    extra_args: OVERLAY_CONFIG="overlay-native.conf"
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim
+    timeout: 60
