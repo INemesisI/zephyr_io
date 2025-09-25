@@ -34,17 +34,18 @@ typedef void (*router_outbound_handler_t)(struct packet_router *router, struct n
 
 /** Inbound packet route registration (network → application) */
 struct router_inbound_route {
-    struct packet_router *router;
+    struct packet_router *router_ptr;
     uint16_t packet_id;
-    struct packet_sink *app_sink;
+    struct packet_sink *app_sink_ptr;
     sys_snode_t node;
 };
 
 /** Outbound packet route registration (application → network) */
 struct router_outbound_route {
-    struct packet_router *router;
+    struct packet_router *router_ptr;
     uint16_t packet_id;
-    struct packet_source *app_source;
+    struct packet_source *app_source_ptr;
+    struct packet_sink handler_sink;
     sys_snode_t node;
 };
 
@@ -89,12 +90,12 @@ struct packet_router {
  * @param _packet_id Packet ID to handle (e.g., 1, 9, 500)
  * @param _app_sink Application sink to receive payloads
  */
-#define ROUTER_INBOUND_ROUTE(_router, _packet_id, _app_sink)                \
+#define ROUTER_INBOUND_ROUTE_DEFINE(_router, _packet_id, _app_sink)         \
     static STRUCT_SECTION_ITERABLE(router_inbound_route,                     \
                                    __inbound_##_router##_##_packet_id) = {  \
-        .router = &_router,                                                 \
+        .router_ptr = &_router,                                             \
         .packet_id = _packet_id,                                            \
-        .app_sink = &_app_sink,                                             \
+        .app_sink_ptr = &_app_sink,                                         \
         .node = {NULL},                                                     \
     }
 
@@ -107,27 +108,20 @@ struct packet_router {
  * @param _packet_id Packet ID for outbound packets
  * @param _app_source Application source to monitor
  */
-#define ROUTER_OUTBOUND_ROUTE(_router, _packet_id, _app_source)             \
+#define ROUTER_OUTBOUND_ROUTE_DEFINE(_router, _packet_id, _app_source)      \
     static STRUCT_SECTION_ITERABLE(router_outbound_route,                   \
                                    __outbound_##_router##_##_packet_id) = { \
-        .router = &_router,                                                 \
+        .router_ptr = &_router,                                             \
         .packet_id = _packet_id,                                            \
-        .app_source = &_app_source,                                         \
-        .node = {NULL},                                                     \
+        .app_source_ptr = &_app_source,                                     \
+        .handler_sink = PACKET_SINK_INITIALIZER_IMMEDIATE(                  \
+                            _router##_out_##_packet_id,                     \
+                            _router_common_outbound_handler,                \
+                            &__outbound_##_router##_##_packet_id),                                                                  \
+        .node = {NULL}                                                      \
     };                                                                      \
-    static struct packet_sink __outbound_sink_##_router##_##_packet_id = {  \
-        IF_ENABLED(CONFIG_PACKET_IO_NAMES,                                 \
-                   (.name = #_router "_out_" #_packet_id,))                \
-        .mode = SINK_MODE_IMMEDIATE,                                        \
-        .handler = _router_common_outbound_handler,                         \
-        .user_data = &__outbound_##_router##_##_packet_id,                 \
-        .msgq = NULL,                                                       \
-        IF_ENABLED(CONFIG_PACKET_IO_STATS,                                 \
-                   (.handled_count = ATOMIC_INIT(0),                       \
-                    .dropped_count = ATOMIC_INIT(0)))                      \
-    };                                                                      \
-    PACKET_SOURCE_CONNECT(_app_source,                                      \
-                          __outbound_sink_##_router##_##_packet_id);
+    PACKET_CONNECT(&_app_source,                                            \
+                    &__outbound_##_router##_##_packet_id.handler_sink)
 
 
 /**
@@ -153,26 +147,10 @@ struct packet_router {
     struct packet_router _name = {                                          \
         IF_ENABLED(CONFIG_PACKET_IO_NAMES,                                 \
                    (.name = #_name,))                                      \
-        .network_sink = {                                                   \
-            IF_ENABLED(CONFIG_PACKET_IO_NAMES,                             \
-                       (.name = #_name "_network_sink",))                 \
-            .mode = SINK_MODE_IMMEDIATE,                                    \
-            .handler = _inbound_handler,                                    \
-            .user_data = &_name,                                            \
-            .msgq = NULL,                                                   \
-            IF_ENABLED(CONFIG_PACKET_IO_STATS,                             \
-                       (.handled_count = ATOMIC_INIT(0),                   \
-                        .dropped_count = ATOMIC_INIT(0)))                  \
-        },                                                                  \
-        .network_source = {                                                 \
-            IF_ENABLED(CONFIG_PACKET_IO_NAMES,                             \
-                       (.name = #_name "_network_source",))               \
-            .sinks = SYS_DLIST_STATIC_INIT(&_name.network_source.sinks),   \
-            .lock = {},                                                     \
-            IF_ENABLED(CONFIG_PACKET_IO_STATS,                             \
-                       (.send_count = ATOMIC_INIT(0),                      \
-                        .queued_total = ATOMIC_INIT(0)))                   \
-        },                                                                  \
+        .network_sink = PACKET_SINK_INITIALIZER_IMMEDIATE(_name##_network_sink,  \
+                                                           _inbound_handler,      \
+                                                           &_name),               \
+        .network_source = PACKET_SOURCE_INITIALIZER(_name.network_source),                                                                  \
         .outbound_handler = _outbound_handler,                              \
         .inbound_routes = {                                                  \
             .list = SYS_SLIST_STATIC_INIT(&_name.inbound_routes.list),      \

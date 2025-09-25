@@ -27,10 +27,10 @@ The router is application-specific, owning its network interfaces and protocol h
 ROUTER_DEFINE(iotsense_router, inbound_handler, outbound_handler);
 ```
 
-### Separate Registration Macros
+### Route Definition Macros
 ```c
-ROUTER_INBOUND_ROUTE(router, packet_id, app_sink);
-ROUTER_OUTBOUND_ROUTE(router, packet_id, app_source);
+ROUTER_INBOUND_ROUTE_DEFINE(router, packet_id, app_sink);
+ROUTER_OUTBOUND_ROUTE_DEFINE(router, packet_id, app_source);
 ```
 
 ### Sparse Packet ID Support

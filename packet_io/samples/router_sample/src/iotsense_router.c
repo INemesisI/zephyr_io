@@ -154,7 +154,6 @@ ROUTER_DEFINE(iotsense_router, iotsense_network_inbound_handler,
 static void iotsense_network_inbound_handler(struct packet_sink *sink,
                                              struct net_buf *buf) {
   struct router_inbound_route *route;
-  struct net_buf *payload_buf;
   uint16_t packet_id;
 
   /* Validate packet size */
@@ -195,21 +194,11 @@ static void iotsense_network_inbound_handler(struct packet_sink *sink,
     return;
   }
 
-  /* Clone buffer and strip header */
-  payload_buf = net_buf_clone(buf, K_NO_WAIT);
-  if (!payload_buf) {
-#ifdef CONFIG_PACKET_IO_STATS
-    atomic_inc(&iotsense_router.buffer_errors);
-#endif
-    LOG_ERR("Buffer clone failed");
-    return;
-  }
-
-  net_buf_pull(payload_buf, IOTSENSE_HEADER_SIZE);
+  /* Strip header and deliver payload (buffer will be consumed) */
+  net_buf_pull(buf, IOTSENSE_HEADER_SIZE);
 
   /* Deliver to application sink */
-  int ret =
-      packet_sink_deliver_consume(route->app_sink, payload_buf, K_NO_WAIT);
+  int ret = packet_sink_deliver_consume(route->app_sink_ptr, buf, K_NO_WAIT);
   if (ret < 0) {
     LOG_WRN("Delivery failed: %d", ret);
   }

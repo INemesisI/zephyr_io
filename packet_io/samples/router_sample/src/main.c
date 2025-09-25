@@ -18,18 +18,18 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 /* Packet type registrations */
 
 /* Temperature sensor - outbound only */
-ROUTER_OUTBOUND_ROUTE(iotsense_router, PKT_ID_SENSOR_TEMP,
-                      temperature_sensor_source);
+ROUTER_OUTBOUND_ROUTE_DEFINE(iotsense_router, PKT_ID_SENSOR_TEMP,
+                             temperature_sensor_source);
 
 /* System control - bidirectional */
-ROUTER_INBOUND_ROUTE(iotsense_router, PKT_ID_SYSTEM_CONFIG,
-                     system_control_sink);
+ROUTER_INBOUND_ROUTE_DEFINE(iotsense_router, PKT_ID_SYSTEM_CONFIG,
+                            system_control_sink);
 
-ROUTER_OUTBOUND_ROUTE(iotsense_router, PKT_ID_SYSTEM_CONFIG,
-                      system_control_source);
+ROUTER_OUTBOUND_ROUTE_DEFINE(iotsense_router, PKT_ID_SYSTEM_CONFIG,
+                             system_control_source);
 
 /* LED controller - inbound only */
-ROUTER_INBOUND_ROUTE(iotsense_router, PKT_ID_ACTUATOR_LED, led_controller_sink);
+ROUTER_INBOUND_ROUTE_DEFINE(iotsense_router, PKT_ID_ACTUATOR_LED, led_controller_sink);
 
 /* Network connections */
 PACKET_CONNECT(&tcp_server_source, &iotsense_router.network_sink);

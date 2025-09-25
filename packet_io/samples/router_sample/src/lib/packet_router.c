@@ -9,7 +9,7 @@ LOG_MODULE_REGISTER(packet_router, LOG_LEVEL_DBG);
 void _router_common_outbound_handler(struct packet_sink *sink, struct net_buf *buf)
 {
     struct router_outbound_route *route = (struct router_outbound_route *)sink->user_data;
-    route->router->outbound_handler(route->router, buf, route->packet_id);
+    route->router_ptr->outbound_handler(route->router_ptr, buf, route->packet_id);
 }
 
 struct router_inbound_route *router_find_inbound_route(struct packet_router *router,
@@ -62,7 +62,7 @@ struct router_outbound_route *router_find_outbound_route_by_source(
 
     SYS_SLIST_FOR_EACH_NODE(&router->outbound_routes.list, node) {
         route = CONTAINER_OF(node, struct router_outbound_route, node);
-        if (route->app_source == source) {
+        if (route->app_source_ptr == source) {
             k_spin_unlock(&router->outbound_routes.lock, key);
             return route;
         }
@@ -80,14 +80,14 @@ int router_init(struct packet_router *router)
 
 
     STRUCT_SECTION_FOREACH(router_inbound_route, inbound_item) {
-        if (inbound_item->router == router) {
+        if (inbound_item->router_ptr == router) {
             router_add_inbound_route(router, inbound_item);
             inbound_count++;
         }
     }
 
     STRUCT_SECTION_FOREACH(router_outbound_route, outbound_item) {
-        if (outbound_item->router == router) {
+        if (outbound_item->router_ptr == router) {
             router_add_outbound_route(router, outbound_item);
             outbound_count++;
         }
