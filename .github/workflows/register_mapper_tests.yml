@@ -49,22 +49,11 @@ jobs:
           setup-python-env: 'true'  # This container needs Python setup
           install-coverage-tools: 'false'
 
-      - name: Run Register Mapper Tests with Twister
-        working-directory: zephyr
+      - name: Run Register Mapper Tests
         shell: bash
         run: |
-          source .venv/bin/activate
-
-          # ZEPHYR_EXTRA_MODULES is already set by the setup action
-          # Just run the tests
-          west twister \
-            -T ../zephyr_io/register_mapper \
-            -p native_sim \
-            -v \
-            --inline-logs \
-            --retry-failed 2 \
-            -O twister-out \
-            --no-clean
+          cd zephyr_io/..
+          ./zephyr_io/scripts/run_register_mapper_tests.sh
 
       - name: Upload Test Results
         if: always()
@@ -73,8 +62,8 @@ jobs:
           name: Register Mapper Test Results
           if-no-files-found: ignore
           path: |
-            zephyr/twister-out/twister.xml
-            zephyr/twister-out/twister.json
+            twister-out/twister.xml
+            twister-out/twister.json
 
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2

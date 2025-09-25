@@ -50,28 +50,16 @@ jobs:
           setup-python-env: 'true'  # This container needs Python setup
           install-coverage-tools: 'true'
 
-      - name: Run Coverage Tests with Twister
-        working-directory: zephyr
+      - name: Run Coverage Tests
         shell: bash
         run: |
-          source .venv/bin/activate
-
-          # ZEPHYR_EXTRA_MODULES is already set by the setup action
-          # Run all register_mapper tests with coverage
-          west twister \
-            --coverage \
-            -T ../zephyr_io/register_mapper/tests \
-            -p native_sim \
-            -v \
-            --inline-logs \
-            -O twister-coverage \
-            --no-clean
+          cd zephyr_io/..
+          ./zephyr_io/scripts/generate_coverage_register_mapper.sh
 
       - name: Generate coverage report
-        working-directory: zephyr
         shell: bash
         run: |
-          cd twister-coverage
+          cd twister-register-mapper-coverage
           # Only analyze register_mapper module source code (not tests, samples, or other modules)
           gcovr --filter=".*register_mapper/subsys/register_mapper/.*" \
                 --xml coverage.xml \
@@ -81,7 +69,7 @@ jobs:
 
           # Also generate text summary for PR comment (register_mapper module only)
           gcovr --filter=".*register_mapper/subsys/register_mapper/.*" \
-                --print-summary twister-coverage > coverage-summary.txt
+                --print-summary twister-register-mapper-coverage > coverage-summary.txt
 
       - name: Upload Coverage Artifacts
         if: always()
@@ -90,9 +78,9 @@ jobs:
           name: Register Mapper Coverage Report
           if-no-files-found: ignore
           path: |
-            zephyr/twister-coverage/coverage.html
-            zephyr/twister-coverage/coverage.xml
-            zephyr/coverage-summary.txt
+            twister-register-mapper-coverage/coverage.html
+            twister-register-mapper-coverage/coverage.xml
+            coverage-summary.txt
 
       - name: Comment PR with Coverage
         if: github.event_name == 'pull_request'
@@ -101,7 +89,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const summary = fs.readFileSync('zephyr/coverage-summary.txt', 'utf8');
+            const summary = fs.readFileSync('coverage-summary.txt', 'utf8');
 
             // Extract coverage percentages
             const lineMatch = summary.match(/lines:\s+([\d.]+)%/);
@@ -156,11 +144,10 @@ jobs:
 
       - name: Coverage Status Check
         if: github.event_name == 'pull_request'
-        working-directory: zephyr
         shell: bash
         run: |
           # Extract coverage percentage for register_mapper module only
-          LINE_COV=$(gcovr --filter=".*register_mapper/subsys/register_mapper/.*" --print-summary twister-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
+          LINE_COV=$(gcovr --filter=".*register_mapper/subsys/register_mapper/.*" --print-summary twister-register-mapper-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
 
           # Set minimum coverage threshold for register_mapper module
           MIN_COVERAGE=80

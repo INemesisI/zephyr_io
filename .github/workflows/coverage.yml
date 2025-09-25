@@ -50,27 +50,16 @@ jobs:
           setup-python-env: 'true'  # This container needs Python setup
           install-coverage-tools: 'true'
 
-      - name: Run Coverage Tests with Twister
-        working-directory: zephyr
+      - name: Run Coverage Tests
         shell: bash
         run: |
-          source .venv/bin/activate
-
-          # Run all packet_io tests with coverage
-          west twister \
-            --coverage \
-            -T ../zephyr_io/packet_io/tests \
-            -p native_sim \
-            -v \
-            --inline-logs \
-            -O twister-coverage \
-            --no-clean
+          cd zephyr_io/..
+          ./zephyr_io/scripts/generate_packet_io_coverage.sh
 
       - name: Generate coverage report
-        working-directory: zephyr
         shell: bash
         run: |
-          cd twister-coverage
+          cd twister-combined-coverage
           # Only analyze packet_io module source code (not tests, samples, or other modules)
           gcovr --filter=".*packet_io/subsys/packet_io/.*" \
                 --xml coverage.xml \
@@ -80,7 +69,7 @@ jobs:
 
           # Also generate text summary for PR comment (packet_io module only)
           gcovr --filter=".*packet_io/subsys/packet_io/.*" \
-                --print-summary twister-coverage > coverage-summary.txt
+                --print-summary twister-combined-coverage > coverage-summary.txt
 
       - name: Upload Coverage Artifacts
         if: always()
@@ -89,9 +78,9 @@ jobs:
           name: Coverage Report
           if-no-files-found: ignore
           path: |
-            zephyr/twister-coverage/coverage.html
-            zephyr/twister-coverage/coverage.xml
-            zephyr/coverage-summary.txt
+            twister-combined-coverage/coverage.html
+            twister-combined-coverage/coverage.xml
+            coverage-summary.txt
 
       - name: Comment PR with Coverage
         if: github.event_name == 'pull_request'
@@ -100,7 +89,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const summary = fs.readFileSync('zephyr/coverage-summary.txt', 'utf8');
+            const summary = fs.readFileSync('coverage-summary.txt', 'utf8');
 
             // Extract coverage percentages
             const lineMatch = summary.match(/lines:\s+([\d.]+)%/);
@@ -155,11 +144,10 @@ jobs:
 
       - name: Coverage Status Check
         if: github.event_name == 'pull_request'
-        working-directory: zephyr
         shell: bash
         run: |
           # Extract coverage percentage for packet_io module only
-          LINE_COV=$(gcovr --filter=".*packet_io/subsys/packet_io/.*" --print-summary twister-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
+          LINE_COV=$(gcovr --filter=".*packet_io/subsys/packet_io/.*" --print-summary twister-combined-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
 
           # Set minimum coverage threshold for packet_io module
           MIN_COVERAGE=90

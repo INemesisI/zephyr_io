@@ -49,21 +49,11 @@ jobs:
           setup-python-env: 'true'  # This container needs Python setup
           install-coverage-tools: 'false'
 
-      - name: Run Packet I/O Tests with Twister
-        working-directory: zephyr
+      - name: Run Packet I/O Tests
         shell: bash
         run: |
-          source .venv/bin/activate
-
-          # Run all packet_io tests and samples
-          west twister \
-            -T ../zephyr_io/packet_io \
-            -p native_sim \
-            -v \
-            --inline-logs \
-            --retry-failed 2 \
-            -O twister-out \
-            --no-clean
+          cd zephyr_io/..
+          ./zephyr_io/scripts/run_packet_io_tests.sh
 
       - name: Upload Test Results
         if: always()
@@ -72,8 +62,8 @@ jobs:
           name: Packet IO Test Results
           if-no-files-found: ignore
           path: |
-            zephyr/twister-out/twister.xml
-            zephyr/twister-out/twister.json
+            twister-out/twister.xml
+            twister-out/twister.json
 
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
