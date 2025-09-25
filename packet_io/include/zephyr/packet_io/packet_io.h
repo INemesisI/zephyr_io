@@ -292,9 +292,6 @@ struct packet_connection {
 		.sink = (_sink_ptr),                                           \
 	}
 
-/* Legacy macro for backward compatibility - will be deprecated */
-#define PACKET_SOURCE_CONNECT(_source, _sink)                                 \
-	PACKET_CONNECT(&_source, &_sink)
 
 /* ============================ Function APIs ============================ */
 

@@ -253,7 +253,7 @@ Wiring Sources and Sinks
 
 **Compile-Time Connections**
 
-Static connections are established using :c:macro:`PACKET_SOURCE_CONNECT`:
+Static connections are established using :c:macro:`PACKET_CONNECT`:
 
 .. code-block:: c
 
