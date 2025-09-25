@@ -145,6 +145,60 @@ struct packet_connection {
  */
 #define PACKET_SINK_DECLARE(_name) extern struct packet_sink _name
 
+/* ============================ Initializer Macros ============================ */
+
+/**
+ * @brief Static initializer for packet source
+ *
+ * @param _name Name of the source (used for list initialization)
+ */
+#define PACKET_SOURCE_INITIALIZER(_name) {                                        \
+	IF_ENABLED(CONFIG_PACKET_IO_NAMES, (.name = #_name,))                    \
+	.sinks = SYS_DLIST_STATIC_INIT(&_name.sinks),                            \
+	.lock = {},                                                               \
+	IF_ENABLED(CONFIG_PACKET_IO_STATS,                                       \
+		   (.send_count = ATOMIC_INIT(0),                                \
+		    .queued_total = ATOMIC_INIT(0)))                              \
+}
+
+/**
+ * @brief Static initializer for immediate packet sink
+ *
+ * @param _name Name identifier of the sink (gets stringified for debug names)
+ * @param _handler Handler function to call for each packet
+ * @param _user_data User data to pass to handler
+ */
+#define PACKET_SINK_INITIALIZER_IMMEDIATE(_name, _handler, _user_data) {          \
+	IF_ENABLED(CONFIG_PACKET_IO_NAMES, (.name = #_name,))                    \
+	.mode = SINK_MODE_IMMEDIATE,                                             \
+	.handler = (_handler),                                                    \
+	.msgq = NULL,                                                             \
+	.user_data = (_user_data),                                                \
+	IF_ENABLED(CONFIG_PACKET_IO_STATS,                                       \
+		   (.handled_count = ATOMIC_INIT(0),                             \
+		    .dropped_count = ATOMIC_INIT(0)))                            \
+}
+
+/**
+ * @brief Static initializer for queued packet sink
+ *
+ * @param _name Name identifier of the sink (gets stringified for debug names)
+ * @param _handler Handler function to call for each packet
+ * @param _msgq Message queue pointer (must not be NULL)
+ * @param _user_data User data to pass to handler
+ */
+#define PACKET_SINK_INITIALIZER_QUEUED(_name, _handler, _msgq, _user_data) {      \
+	IF_ENABLED(CONFIG_PACKET_IO_NAMES, (.name = #_name,))                    \
+	.mode = SINK_MODE_QUEUED,                                                 \
+	.handler = (_handler),                                                    \
+	.msgq = (_msgq),                                                          \
+	.user_data = (_user_data),                                                \
+	IF_ENABLED(CONFIG_PACKET_IO_STATS,                                       \
+		   (.handled_count = ATOMIC_INIT(0),                             \
+		    .dropped_count = ATOMIC_INIT(0)))                            \
+}
+
+
 /* ============================ Definition Macros ============================ */
 
 /**
@@ -156,15 +210,7 @@ struct packet_connection {
  * @param _name Name of the source variable
  */
 #define PACKET_SOURCE_DEFINE(_name)                                           \
-	struct packet_source _name = {                                        \
-		IF_ENABLED(CONFIG_PACKET_IO_NAMES,                           \
-			   (.name = #_name,))                                \
-		.sinks = SYS_DLIST_STATIC_INIT(&_name.sinks),                \
-		.lock = {},                                                   \
-		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
-			   (.send_count = ATOMIC_INIT(0),                    \
-			    .queued_total = ATOMIC_INIT(0)))              \
-	};
+	struct packet_source _name = PACKET_SOURCE_INITIALIZER(_name);
 
 /**
  * @brief Define a message queue for packet events
@@ -194,19 +240,16 @@ struct packet_connection {
  *
  * @param _name Name of the sink variable
  * @param _handler Handler function to call for each packet
+ * @param ... Optional user data (defaults to NULL)
  */
-#define PACKET_SINK_DEFINE_IMMEDIATE(_name, _handler)                         \
-	struct packet_sink _name = {                                          \
-		IF_ENABLED(CONFIG_PACKET_IO_NAMES,                           \
-			   (.name = #_name,))                                \
-		.mode = SINK_MODE_IMMEDIATE,                                  \
-		.handler = _handler,                                           \
-		.user_data = NULL,                                             \
-		.msgq = NULL,                                                  \
-		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
-			   (.handled_count = ATOMIC_INIT(0),                 \
-			    .dropped_count = ATOMIC_INIT(0)))                \
-	};
+#define PACKET_SINK_DEFINE_IMMEDIATE(...) \
+	UTIL_CAT(Z_PACKET_SINK_IMMEDIATE_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+
+#define Z_PACKET_SINK_IMMEDIATE_2(_name, _handler) \
+	struct packet_sink _name = PACKET_SINK_INITIALIZER_IMMEDIATE(_name, _handler, NULL)
+
+#define Z_PACKET_SINK_IMMEDIATE_3(_name, _handler, _data) \
+	struct packet_sink _name = PACKET_SINK_INITIALIZER_IMMEDIATE(_name, _handler, _data)
 
 /**
  * @brief Define a packet sink with queued execution
@@ -217,40 +260,17 @@ struct packet_connection {
  * @param _name Name of the sink variable
  * @param _handler Handler function to call for each packet
  * @param _queue Pointer to packet_event_queue to use
+ * @param ... Optional user data (defaults to NULL)
  */
-#define PACKET_SINK_DEFINE_QUEUED(_name, _handler, _queue)            \
-	struct packet_sink _name = {                                          \
-		IF_ENABLED(CONFIG_PACKET_IO_NAMES,                           \
-			   (.name = #_name,))                                \
-		.mode = SINK_MODE_QUEUED,                                     \
-		.handler = _handler,                                           \
-		.user_data = NULL,                                             \
-		.msgq = &(_queue##_msgq),                                     \
-		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
-			   (.handled_count = ATOMIC_INIT(0),                 \
-			    .dropped_count = ATOMIC_INIT(0)))                \
-	};
+#define PACKET_SINK_DEFINE_QUEUED(...) \
+	UTIL_CAT(Z_PACKET_SINK_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
 
-/**
- * @brief Define a packet sink with user data
- *
- * @param _name Name of the sink variable
- * @param _handler Handler function to call for each packet
- * @param _msgq Pointer to message queue (struct k_msgq*) or NULL for immediate execution
- * @param _data User data to pass to handler
- */
-#define PACKET_SINK_DEFINE_WITH_DATA(_name, _handler, _msgq, _data)  \
-	struct packet_sink _name = {                                          \
-		IF_ENABLED(CONFIG_PACKET_IO_NAMES,                           \
-			   (.name = #_name,))                                \
-		.mode = (_msgq) ? SINK_MODE_QUEUED : SINK_MODE_IMMEDIATE,     \
-		.handler = _handler,                                           \
-		.user_data = _data,                                            \
-		.msgq = _msgq,                                                 \
-		IF_ENABLED(CONFIG_PACKET_IO_STATS,                           \
-			   (.handled_count = ATOMIC_INIT(0),                 \
-			    .dropped_count = ATOMIC_INIT(0)))                \
-	};
+#define Z_PACKET_SINK_QUEUED_3(_name, _handler, _queue) \
+	struct packet_sink _name = PACKET_SINK_INITIALIZER_QUEUED(_name, _handler, &(_queue##_msgq), NULL)
+
+#define Z_PACKET_SINK_QUEUED_4(_name, _handler, _queue, _data) \
+	struct packet_sink _name = PACKET_SINK_INITIALIZER_QUEUED(_name, _handler, &(_queue##_msgq), _data)
+
 
 /**
  * @brief Connect a packet source to a packet sink
