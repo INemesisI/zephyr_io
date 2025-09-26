@@ -25,7 +25,7 @@ A compile-time register mapping framework for Zephyr RTOS that bridges external 
 ### Basic Usage
 
 ```c
-#include <zephyr/register_mapper/register_mapper.h>
+#include <zephyr_io/register_mapper/register_mapper.h>
 #include <zephyr/zbus/zbus.h>
 
 // Define configuration structure
@@ -144,7 +144,7 @@ ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
 ## 📖 Documentation
 
 - **[User Guide](register_mapper/doc/index.rst)**: Comprehensive documentation with concepts, patterns, and examples
-- **[API Reference](register_mapper/include/zephyr/register_mapper/register_mapper.h)**: Detailed API documentation
+- **[API Reference](register_mapper/include/zephyr_io/register_mapper/register_mapper.h)**: Detailed API documentation
 - **[Sample Code](register_mapper/samples/)**: Complete device configuration example
 - **[Test Suite](register_mapper/tests/)**: Unit and integration tests
 

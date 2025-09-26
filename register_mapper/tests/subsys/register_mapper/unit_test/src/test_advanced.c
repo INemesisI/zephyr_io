@@ -15,8 +15,8 @@
 #include <zephyr/ztest.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
-#include <zephyr/register_mapper/register_mapper.h>
-#include <zephyr/register_mapper/register_channel.h>
+#include <zephyr_io/register_mapper/register_mapper.h>
+#include <zephyr_io/register_mapper/register_channel.h>
 
 /* Message with all supported types */
 struct all_types_msg {
@@ -31,24 +31,23 @@ struct all_types_msg {
 };
 
 /* Channel for testing all types */
-REGISTER_CHAN_DEFINE(all_types_chan, struct all_types_msg, NULL, NULL,
-		     ZBUS_OBSERVERS_EMPTY,
-		     ({.u8 = 0, .u16 = 0, .u32 = 0, .u64 = 0,
-		       .i8 = 0, .i16 = 0, .i32 = 0, .i64 = 0}));
+REGISTER_CHAN_DEFINE(
+	all_types_chan, struct all_types_msg, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+	({.u8 = 0, .u16 = 0, .u32 = 0, .u64 = 0, .i8 = 0, .i16 = 0, .i32 = 0, .i64 = 0}));
 
 /* Define registers at maximum address range */
-REG_MAPPING_DEFINE(max_addr_u8, 0xFFF8, &all_types_chan, struct all_types_msg,
-		   u8, REG_TYPE_U8, REG_FLAGS_RW);
-REG_MAPPING_DEFINE(max_addr_u16, 0xFFFA, &all_types_chan, struct all_types_msg,
-		   u16, REG_TYPE_U16, REG_FLAGS_RW);
-REG_MAPPING_DEFINE(max_addr_u32, 0xFFFC, &all_types_chan, struct all_types_msg,
-		   u32, REG_TYPE_U32, REG_FLAGS_RW);
+REG_MAPPING_DEFINE(max_addr_u8, 0xFFF8, &all_types_chan, struct all_types_msg, u8, REG_TYPE_U8,
+		   REG_FLAGS_RW);
+REG_MAPPING_DEFINE(max_addr_u16, 0xFFFA, &all_types_chan, struct all_types_msg, u16, REG_TYPE_U16,
+		   REG_FLAGS_RW);
+REG_MAPPING_DEFINE(max_addr_u32, 0xFFFC, &all_types_chan, struct all_types_msg, u32, REG_TYPE_U32,
+		   REG_FLAGS_RW);
 
 /* Define registers at minimum address */
-REG_MAPPING_DEFINE(min_addr_u8, 0x0000, &all_types_chan, struct all_types_msg,
-		   i8, REG_TYPE_I8, REG_FLAGS_RW);
-REG_MAPPING_DEFINE(min_addr_u16, 0x0002, &all_types_chan, struct all_types_msg,
-		   i16, REG_TYPE_I16, REG_FLAGS_RW);
+REG_MAPPING_DEFINE(min_addr_u8, 0x0000, &all_types_chan, struct all_types_msg, i8, REG_TYPE_I8,
+		   REG_FLAGS_RW);
+REG_MAPPING_DEFINE(min_addr_u16, 0x0002, &all_types_chan, struct all_types_msg, i16, REG_TYPE_I16,
+		   REG_FLAGS_RW);
 
 ZTEST_SUITE(test_advanced, NULL, NULL, NULL, NULL, NULL);
 
@@ -112,7 +111,7 @@ ZTEST(test_advanced, test_channel_state_consistency)
 /* Helper callbacks for foreach test - moved outside to avoid nested functions */
 static int immediate_stop_callback(const struct reg_mapping *mapping, void *user_data)
 {
-	return -1;  /* Stop immediately */
+	return -1; /* Stop immediately */
 }
 
 struct search_context {
@@ -146,7 +145,7 @@ ZTEST(test_advanced, test_foreach_edge_cases)
 	zassert_equal(ret, 1, "Should process exactly one register");
 
 	/* Test callback that counts specific addresses */
-	struct search_context search_data = { .target_addr = 0xFFFC, .found_count = 0 };
+	struct search_context search_data = {.target_addr = 0xFFFC, .found_count = 0};
 
 	ret = reg_foreach(search_callback, &search_data);
 	zassert_true(ret > 0, "Should process registers");
@@ -166,7 +165,7 @@ ZTEST(test_advanced, test_error_propagation)
 	zassert_equal(ret, -ENOENT, "Should return -ENOENT for non-existent register");
 
 	/* Test type mismatch */
-	val = REG_VALUE_U16(123);  /* Wrong type for U8 register */
+	val = REG_VALUE_U16(123); /* Wrong type for U8 register */
 	ret = reg_write_value(0xFFF8, val, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should return -EINVAL for type mismatch");
 
@@ -241,20 +240,19 @@ static void test_observer(const struct zbus_channel *chan)
 ZBUS_LISTENER_DEFINE(test_listener, test_observer);
 
 /* Channel with observer */
-REGISTER_CHAN_DEFINE(observed_chan, struct all_types_msg, NULL, NULL,
-		     ZBUS_OBSERVERS(test_listener),
-		     ({.u8 = 0, .u16 = 0, .u32 = 0, .u64 = 0,
-		       .i8 = 0, .i16 = 0, .i32 = 0, .i64 = 0}));
+REGISTER_CHAN_DEFINE(
+	observed_chan, struct all_types_msg, NULL, NULL, ZBUS_OBSERVERS(test_listener),
+	({.u8 = 0, .u16 = 0, .u32 = 0, .u64 = 0, .i8 = 0, .i16 = 0, .i32 = 0, .i64 = 0}));
 
-REG_MAPPING_DEFINE(observed_reg, 0xE000, &observed_chan, struct all_types_msg,
-		   u32, REG_TYPE_U32, REG_FLAGS_RW);
+REG_MAPPING_DEFINE(observed_reg, 0xE000, &observed_chan, struct all_types_msg, u32, REG_TYPE_U32,
+		   REG_FLAGS_RW);
 
 /* Registers with restricted permissions for testing */
-REG_MAPPING_DEFINE(write_only_reg, 0x5000, &all_types_chan, struct all_types_msg,
-		   u32, REG_TYPE_U32, REG_FLAGS_WO);
+REG_MAPPING_DEFINE(write_only_reg, 0x5000, &all_types_chan, struct all_types_msg, u32, REG_TYPE_U32,
+		   REG_FLAGS_WO);
 
-REG_MAPPING_DEFINE(read_only_reg, 0x5004, &all_types_chan, struct all_types_msg,
-		   u16, REG_TYPE_U16, REG_FLAGS_RO);
+REG_MAPPING_DEFINE(read_only_reg, 0x5004, &all_types_chan, struct all_types_msg, u16, REG_TYPE_U16,
+		   REG_FLAGS_RO);
 
 /**
  * @brief Test observer interaction with register writes
@@ -366,7 +364,7 @@ ZTEST(test_advanced, test_type_validation)
 	size_t size;
 
 	/* Test type mismatch: write U16 value to U8 register */
-	val = REG_VALUE_U16(0x1234);  /* Wrong type for U8 register at 0xFFF8 */
+	val = REG_VALUE_U16(0x1234); /* Wrong type for U8 register at 0xFFF8 */
 	ret = reg_write_value(0xFFF8, val, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Type mismatch should return -EINVAL");
 
@@ -376,10 +374,10 @@ ZTEST(test_advanced, test_type_validation)
 	zassert_equal(ret, -EINVAL, "Type mismatch U64->U32 should return -EINVAL");
 
 	/* Test invalid type value for reg_type_size */
-	size = reg_type_size(REG_TYPE_COUNT);  /* Invalid type */
+	size = reg_type_size(REG_TYPE_COUNT); /* Invalid type */
 	zassert_equal(size, 0, "Invalid type should return size 0");
 
-	size = reg_type_size(REG_TYPE_COUNT + 10);  /* Way out of range */
+	size = reg_type_size(REG_TYPE_COUNT + 10); /* Way out of range */
 	zassert_equal(size, 0, "Out of range type should return size 0");
 
 	/* Test valid types return correct sizes */
@@ -396,10 +394,9 @@ ZTEST(test_advanced, test_type_validation)
 extern int reg_validate_no_overlaps(void);
 
 /* Channel for overlapping register test */
-REGISTER_CHAN_DEFINE(overlap_test_chan, struct all_types_msg, NULL, NULL,
-		     ZBUS_OBSERVERS_EMPTY,
-		     ({.u8 = 0, .u16 = 0, .u32 = 0, .u64 = 0,
-		       .i8 = 0, .i16 = 0, .i32 = 0, .i64 = 0}));
+REGISTER_CHAN_DEFINE(
+	overlap_test_chan, struct all_types_msg, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+	({.u8 = 0, .u16 = 0, .u32 = 0, .u64 = 0, .i8 = 0, .i16 = 0, .i32 = 0, .i64 = 0}));
 
 /* These registers intentionally overlap for testing:
  * overlap_reg1: 0x7000-0x7003 (4 bytes, U32)
@@ -407,17 +404,17 @@ REGISTER_CHAN_DEFINE(overlap_test_chan, struct all_types_msg, NULL, NULL,
  * overlap_reg3: 0x7006-0x7009 (4 bytes, U32)
  * overlap_reg4: 0x7009-0x700C (4 bytes, U32) - OVERLAPS with reg3!
  */
-REG_MAPPING_DEFINE(overlap_reg1, 0x7000, &overlap_test_chan, struct all_types_msg,
-		   u32, REG_TYPE_U32, REG_FLAGS_RW);
+REG_MAPPING_DEFINE(overlap_reg1, 0x7000, &overlap_test_chan, struct all_types_msg, u32,
+		   REG_TYPE_U32, REG_FLAGS_RW);
 
-REG_MAPPING_DEFINE(overlap_reg2, 0x7002, &overlap_test_chan, struct all_types_msg,
-		   u16, REG_TYPE_U16, REG_FLAGS_RW);  /* OVERLAPS with reg1! */
+REG_MAPPING_DEFINE(overlap_reg2, 0x7002, &overlap_test_chan, struct all_types_msg, u16,
+		   REG_TYPE_U16, REG_FLAGS_RW); /* OVERLAPS with reg1! */
 
-REG_MAPPING_DEFINE(overlap_reg3, 0x7006, &overlap_test_chan, struct all_types_msg,
-		   u32, REG_TYPE_U32, REG_FLAGS_RW);
+REG_MAPPING_DEFINE(overlap_reg3, 0x7006, &overlap_test_chan, struct all_types_msg, u32,
+		   REG_TYPE_U32, REG_FLAGS_RW);
 
-REG_MAPPING_DEFINE(overlap_reg4, 0x7009, &overlap_test_chan, struct all_types_msg,
-		   u32, REG_TYPE_U32, REG_FLAGS_RW);  /* OVERLAPS with reg3! */
+REG_MAPPING_DEFINE(overlap_reg4, 0x7009, &overlap_test_chan, struct all_types_msg, u32,
+		   REG_TYPE_U32, REG_FLAGS_RW); /* OVERLAPS with reg3! */
 
 /**
  * @brief Test overlap detection (Category 3)

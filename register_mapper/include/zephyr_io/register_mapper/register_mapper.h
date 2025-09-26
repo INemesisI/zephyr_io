@@ -19,8 +19,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/sys/iterable_sections.h>
-#include <zephyr/register_mapper/register_types.h>
-#include <zephyr/register_mapper/register_channel.h>
+#include <zephyr_io/register_mapper/register_types.h>
+#include <zephyr_io/register_mapper/register_channel.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -30,9 +30,9 @@ extern "C" {
 
 /* Register flags as bitfield struct (8 bits total) */
 struct reg_flags {
-	uint8_t readable        : 1;  /* Register can be read */
-	uint8_t writable        : 1;  /* Register can be written */
-	uint8_t reserved        : 6;  /* Reserved for future use */
+	uint8_t readable: 1; /* Register can be read */
+	uint8_t writable: 1; /* Register can be written */
+	uint8_t reserved: 6; /* Reserved for future use */
 };
 
 /* Convenience macros for common flag combinations */
@@ -42,13 +42,13 @@ struct reg_flags {
 
 /* Register mapping entry - IMMUTABLE (goes in ROM via iterable section) */
 struct reg_mapping {
-	uint16_t address;                     /* Register address */
-	const struct zbus_channel *channel;   /* Associated channel */
-	uint16_t offset;                      /* Offset in config struct */
-	enum reg_type type;                   /* Data type */
-	struct reg_flags flags;               /* Register flags (IMMUTABLE in ROM) */
+	uint16_t address;                   /* Register address */
+	const struct zbus_channel *channel; /* Associated channel */
+	uint16_t offset;                    /* Offset in config struct */
+	enum reg_type type;                 /* Data type */
+	struct reg_flags flags;             /* Register flags (IMMUTABLE in ROM) */
 #ifdef CONFIG_REGISTER_MAPPER_NAMES
-	const char *name;                     /* Optional register name */
+	const char *name; /* Optional register name */
 #endif
 };
 
@@ -68,24 +68,17 @@ struct reg_mapping {
  * @param _flg Register flags
  */
 #ifdef CONFIG_REGISTER_MAPPER_NAMES
-#define REG_MAPPING_DEFINE_UNSAFE(_name, _addr, _chan, _off, _typ, _flg)     \
-	static STRUCT_SECTION_ITERABLE(reg_mapping, _name) = {                \
-		.address = _addr,                                              \
-		.channel = _chan,                                              \
-		.offset = _off,                                                \
-		.type = _typ,                                                  \
-		.flags = _flg,                                                 \
-		.name = STRINGIFY(_name)                                       \
-	}
+#define REG_MAPPING_DEFINE_UNSAFE(_name, _addr, _chan, _off, _typ, _flg)                           \
+	static STRUCT_SECTION_ITERABLE(reg_mapping, _name) = {.address = _addr,                    \
+							      .channel = _chan,                    \
+							      .offset = _off,                      \
+							      .type = _typ,                        \
+							      .flags = _flg,                       \
+							      .name = STRINGIFY(_name) }
 #else
-#define REG_MAPPING_DEFINE_UNSAFE(_name, _addr, _chan, _off, _typ, _flg)     \
-	static STRUCT_SECTION_ITERABLE(reg_mapping, _name) = {                \
-		.address = _addr,                                              \
-		.channel = _chan,                                              \
-		.offset = _off,                                                \
-		.type = _typ,                                                  \
-		.flags = _flg                                                  \
-	}
+#define REG_MAPPING_DEFINE_UNSAFE(_name, _addr, _chan, _off, _typ, _flg)                           \
+	static STRUCT_SECTION_ITERABLE(reg_mapping, _name) = {                                     \
+		.address = _addr, .channel = _chan, .offset = _off, .type = _typ, .flags = _flg}
 #endif
 
 /**
@@ -104,18 +97,14 @@ struct reg_mapping {
  * @param _typ Register type
  * @param _flg Register flags
  */
-#define REG_MAPPING_DEFINE(_name, _addr, _chan, _msg_type, _field, _typ, _flg) \
-	/* Verify field exists in structure */                                \
-	BUILD_ASSERT(offsetof(_msg_type, _field) >= 0,                        \
-		     "Field '" #_field "' does not exist");                   \
-	/* Verify register type size matches field size */                    \
-	BUILD_ASSERT(sizeof(((_msg_type *)0)->_field) ==                      \
-		     REG_TYPE_SIZE_CONST(_typ),                               \
-		     "Register type size mismatch for field '" #_field "'");  \
-	/* Create the mapping */                                              \
-	REG_MAPPING_DEFINE_UNSAFE(_name, _addr, _chan,                        \
-				  offsetof(_msg_type, _field),                \
-				  _typ, _flg)
+#define REG_MAPPING_DEFINE(_name, _addr, _chan, _msg_type, _field, _typ, _flg)                     \
+	/* Verify field exists in structure */                                                     \
+	BUILD_ASSERT(offsetof(_msg_type, _field) >= 0, "Field '" #_field "' does not exist");      \
+	/* Verify register type size matches field size */                                         \
+	BUILD_ASSERT(sizeof(((_msg_type *)0)->_field) == REG_TYPE_SIZE_CONST(_typ),                \
+		     "Register type size mismatch for field '" #_field "'");                       \
+	/* Create the mapping */                                                                   \
+	REG_MAPPING_DEFINE_UNSAFE(_name, _addr, _chan, offsetof(_msg_type, _field), _typ, _flg)
 
 /**
  * @brief Conditionally define a register mapping
@@ -131,11 +120,11 @@ struct reg_mapping {
  * @param _typ Register type
  * @param _flg Register flags
  */
-#define REG_MAPPING_DEFINE_COND(_cond, _addr, _chan, _msg_type, _field, _typ, _flg) \
-	COND_CODE_1(_cond,                                                    \
-		(REG_MAPPING_DEFINE(reg_##_chan##_##_field, _addr, _chan,     \
-				    _msg_type, _field, _typ, _flg)),          \
-		(/* empty if condition is false */))
+#define REG_MAPPING_DEFINE_COND(_cond, _addr, _chan, _msg_type, _field, _typ, _flg)                \
+	COND_CODE_1(_cond,                                                                         \
+		    (REG_MAPPING_DEFINE(reg_##_chan##_##_field, _addr, _chan, _msg_type, _field,   \
+					_typ, _flg)),                                              \
+		    (/* empty if condition is false */))
 
 /**
  * @brief Begin a block write transaction

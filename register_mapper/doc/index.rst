@@ -166,7 +166,7 @@ Channels represent the internal data structures accessed via registers:
 .. code-block:: c
 
     #include <zephyr/zbus/zbus.h>
-    #include <zephyr/register_mapper/register_mapper.h>
+    #include <zephyr_io/register_mapper/register_mapper.h>
 
     /* Configuration structure */
     struct motor_config {
@@ -224,7 +224,7 @@ Register mappings link addresses to channel fields with type safety:
 
 .. code-block:: c
 
-    #include <zephyr/register_mapper/register_mapper.h>
+    #include <zephyr_io/register_mapper/register_mapper.h>
 
     /* Map register address to channel field */
     REG_MAPPING_DEFINE(motor_speed_reg,      /* Mapping name */

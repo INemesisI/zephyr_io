@@ -14,10 +14,10 @@
 #include <zephyr/ztest.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
-#include <zephyr/register_mapper/register_mapper.h>
-#include <zephyr/register_mapper/register_channel.h>
+#include <zephyr_io/register_mapper/register_mapper.h>
+#include <zephyr_io/register_mapper/register_channel.h>
 
-#define STACK_SIZE 1024
+#define STACK_SIZE      1024
 #define THREAD_PRIORITY 5
 
 /* Test message */
@@ -27,15 +27,14 @@ struct concurrent_msg {
 };
 
 /* Channel for concurrency testing */
-REGISTER_CHAN_DEFINE(concurrent_chan, struct concurrent_msg, NULL, NULL,
-		     ZBUS_OBSERVERS_EMPTY,
+REGISTER_CHAN_DEFINE(concurrent_chan, struct concurrent_msg, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		     ({.counter = 0, .last_writer = 0}));
 
 /* Register mappings */
-REG_MAPPING_DEFINE(concurrent_counter, 0xC000, &concurrent_chan, struct concurrent_msg,
-		   counter, REG_TYPE_U32, REG_FLAGS_RW);
-REG_MAPPING_DEFINE(concurrent_writer, 0xC010, &concurrent_chan, struct concurrent_msg,
-		   last_writer, REG_TYPE_U8, REG_FLAGS_RW);
+REG_MAPPING_DEFINE(concurrent_counter, 0xC000, &concurrent_chan, struct concurrent_msg, counter,
+		   REG_TYPE_U32, REG_FLAGS_RW);
+REG_MAPPING_DEFINE(concurrent_writer, 0xC010, &concurrent_chan, struct concurrent_msg, last_writer,
+		   REG_TYPE_U8, REG_FLAGS_RW);
 
 /* Shared state */
 static volatile bool race_detected = false;
@@ -53,19 +52,23 @@ static void worker_thread(void *id_ptr, void *unused2, void *unused3)
 	struct reg_value val;
 	int ret;
 
-	k_sem_give(&test_sem);  /* Signal ready */
+	k_sem_give(&test_sem); /* Signal ready */
 
 	for (int i = 0; i < 50; i++) {
 		/* Read current counter */
 		ret = reg_read_value(0xC000, &val);
-		if (ret != 0) continue;
+		if (ret != 0) {
+			continue;
+		}
 
 		uint32_t old_val = val.val.u32;
 
 		/* Increment counter */
 		val.val.u32 = old_val + 1;
 		ret = reg_write_value(0xC000, val, K_NO_WAIT);
-		if (ret != 0) continue;
+		if (ret != 0) {
+			continue;
+		}
 
 		/* Write our ID */
 		val = REG_VALUE_U8(id);
@@ -103,13 +106,11 @@ ZTEST(test_concurrency, test_concurrent_increment)
 	reg_write_value(0xC000, val, K_NO_WAIT);
 
 	/* Start two threads that increment the same counter */
-	k_thread_create(&worker1_thread, worker1_stack, STACK_SIZE,
-			worker_thread, (void *)1, NULL, NULL,
-			THREAD_PRIORITY, 0, K_NO_WAIT);
+	k_thread_create(&worker1_thread, worker1_stack, STACK_SIZE, worker_thread, (void *)1, NULL,
+			NULL, THREAD_PRIORITY, 0, K_NO_WAIT);
 
-	k_thread_create(&worker2_thread, worker2_stack, STACK_SIZE,
-			worker_thread, (void *)2, NULL, NULL,
-			THREAD_PRIORITY, 0, K_NO_WAIT);
+	k_thread_create(&worker2_thread, worker2_stack, STACK_SIZE, worker_thread, (void *)2, NULL,
+			NULL, THREAD_PRIORITY, 0, K_NO_WAIT);
 
 	/* Wait for threads to start */
 	k_sem_take(&test_sem, K_FOREVER);
@@ -128,8 +129,8 @@ ZTEST(test_concurrency, test_concurrent_increment)
 
 	/* Note: race_detected shows if non-atomic behavior was observed
 	 * This is expected since register operations aren't atomic */
-	TC_PRINT("Final counter: %u, Total writes: %d, Races: %s\n",
-		 val.val.u32, total_writes, race_detected ? "yes" : "no");
+	TC_PRINT("Final counter: %u, Total writes: %d, Races: %s\n", val.val.u32, total_writes,
+		 race_detected ? "yes" : "no");
 }
 
 #ifdef CONFIG_REGISTER_MAPPER_BLOCK_WRITE

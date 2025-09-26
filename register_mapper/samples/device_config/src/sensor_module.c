@@ -7,41 +7,24 @@
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/register_mapper/register_channel.h>
+#include <zephyr_io/register_mapper/register_channel.h>
 #include "sensor_module.h"
 
 LOG_MODULE_REGISTER(sensor_module, LOG_LEVEL_INF);
 
-/* Define the three sensor channels */
-/* Status channel - updated by sensor, read by external */
-REGISTER_CHAN_DEFINE(sensor_status_chan,
-	struct sensor_status,
-	NULL, /* No validator */
-	NULL, /* user_data will be set to channel_state */
-	ZBUS_OBSERVERS_EMPTY, /* No observers */
-	(ZBUS_MSG_INIT(.status = SENSOR_STATUS_READY,
-		       .data = 0)));
+REGISTER_CHAN_DEFINE(sensor_status_chan, struct sensor_status, NULL, NULL,
+		     ZBUS_OBSERVERS_EMPTY,
+		     (ZBUS_MSG_INIT(.status = SENSOR_STATUS_READY, .data = 0)));
 
-/* Config channel - written by external, read by sensor */
-REGISTER_CHAN_DEFINE(sensor_config_chan,
-	struct sensor_config,
-	NULL, /* No validator */
-	NULL, /* user_data will be set to channel_state */
-	ZBUS_OBSERVERS_EMPTY, /* Will add subscriber */
-	(ZBUS_MSG_INIT(.threshold = 2048,
-		       .reserved = 0)));
+REGISTER_CHAN_DEFINE(sensor_config_chan, struct sensor_config, NULL, NULL,
+		     ZBUS_OBSERVERS_EMPTY,
+		     (ZBUS_MSG_INIT(.threshold = 2048, .reserved = 0)));
 
-/* Command channel - written by external, consumed by sensor */
-REGISTER_CHAN_DEFINE(sensor_command_chan,
-	struct sensor_command,
-	NULL, /* No validator */
-	NULL, /* user_data will be set to channel_state */
-	ZBUS_OBSERVERS_EMPTY, /* Will add subscriber */
-	(ZBUS_MSG_INIT(.control = 0,
-		       .reserved = {0})));
+REGISTER_CHAN_DEFINE(sensor_command_chan, struct sensor_command, NULL, NULL,
+		     ZBUS_OBSERVERS_EMPTY,
+		     (ZBUS_MSG_INIT(.control = 0, .reserved = {0})));
 
-/* Single subscriber for both config and command changes */
-ZBUS_SUBSCRIBER_DEFINE(sensor_subscriber, 8);  /* Queue for both channels */
+ZBUS_SUBSCRIBER_DEFINE(sensor_subscriber, 8);
 
 /* Subscribe to both config and command channels */
 ZBUS_CHAN_ADD_OBS(sensor_config_chan, sensor_subscriber, 0);
@@ -55,7 +38,7 @@ K_TIMER_DEFINE(sensor_timer, sensor_timer_handler, NULL);
 static struct k_poll_signal sensor_timer_signal = K_POLL_SIGNAL_INITIALIZER(sensor_timer_signal);
 
 /* Poll events for the sensor thread (initialized at runtime) */
-static struct k_poll_event sensor_events[2];  /* Timer + subscriber */
+static struct k_poll_event sensor_events[2]; /* Timer + subscriber */
 
 /* Timer handler - raises signal for thread */
 static void sensor_timer_handler(struct k_timer *timer)
@@ -66,50 +49,52 @@ static void sensor_timer_handler(struct k_timer *timer)
 /* Perform sensor sampling and update status */
 static void sensor_sample(void)
 {
-	/* Read current status */
-	struct sensor_status status;
-	if (zbus_chan_read(&sensor_status_chan, &status, K_MSEC(100)) != 0) {
+	struct sensor_status *status;
+	struct sensor_config config;
+	uint8_t old_status;
+
+	/* Claim status channel for atomic update */
+	if (zbus_chan_claim(&sensor_status_chan, K_MSEC(100)) != 0) {
+		LOG_ERR("Failed to claim sensor status channel");
 		return;
 	}
 
+	/* Get direct pointer to status data (no copy needed) */
+	status = (struct sensor_status *)zbus_chan_const_msg(&sensor_status_chan);
+
 	/* Check if sensor is running */
-	if (!(status.status & SENSOR_STATUS_RUNNING)) {
+	if (!(status->status & SENSOR_STATUS_RUNNING)) {
+		zbus_chan_finish(&sensor_status_chan);
 		return;
 	}
 
 	/* Read current config for threshold */
-	struct sensor_config config;
 	if (zbus_chan_read(&sensor_config_chan, &config, K_MSEC(100)) != 0) {
+		zbus_chan_finish(&sensor_status_chan);
 		return;
 	}
 
-	/* Update status channel */
-	if (zbus_chan_claim(&sensor_status_chan, K_MSEC(100)) != 0) {
-		return;
-	}
-
-	struct sensor_status *st = zbus_chan_msg(&sensor_status_chan);
-
-	uint8_t old_status = st->status;
+	old_status = status->status;
 
 	/* Simulate sensor data */
-	st->data += 10;
+	status->data += 10;
 
 	/* Check threshold */
-	if (st->data > config.threshold && config.threshold > 0) {
-		if (!(st->status & SENSOR_STATUS_ALERT)) {
-			st->status |= SENSOR_STATUS_ALERT;
-			LOG_WRN("Sensor alert: data %u exceeds threshold %u",
-				st->data, config.threshold);
+	if (status->data > config.threshold && config.threshold > 0) {
+		if (!(status->status & SENSOR_STATUS_ALERT)) {
+			status->status |= SENSOR_STATUS_ALERT;
+			LOG_WRN("Sensor alert: data %u exceeds threshold %u", status->data,
+				config.threshold);
 		}
 	} else {
-		st->status &= ~SENSOR_STATUS_ALERT;
+		status->status &= ~SENSOR_STATUS_ALERT;
 	}
 
+	/* Finish the claim */
 	zbus_chan_finish(&sensor_status_chan);
 
 	/* Notify if status changed (alert triggered/cleared) */
-	if (st->status != old_status) {
+	if (status->status != old_status) {
 		zbus_chan_notify(&sensor_status_chan, K_NO_WAIT);
 	}
 }
@@ -117,70 +102,74 @@ static void sensor_sample(void)
 /* Process sensor control commands */
 static void sensor_process_command(void)
 {
-	/* Read and clear command channel */
-	if (zbus_chan_claim(&sensor_command_chan, K_MSEC(100)) != 0) {
+	struct sensor_command cmd;
+	struct sensor_status *status;
+	uint8_t old_status;
+
+	/* Read command */
+	if (zbus_chan_read(&sensor_command_chan, &cmd, K_MSEC(100)) != 0) {
 		return;
 	}
 
-	struct sensor_command *cmd = zbus_chan_msg(&sensor_command_chan);
-	uint8_t control = cmd->control;
-	cmd->control = 0;  /* Clear command register (self-clearing) */
-	zbus_chan_finish(&sensor_command_chan);
-
-	if (control == 0) {
-		return;  /* No command to process */
+	if (cmd.control == 0) {
+		return; /* No command to process */
 	}
 
-	LOG_INF("Sensor command: control=0x%02x", control);
+	LOG_INF("Sensor command: control=0x%02x", cmd.control);
 
-	/* Update status based on commands */
+	/* Clear command register (self-clearing) */
+	struct sensor_command clear_cmd = {0};
+	zbus_chan_pub(&sensor_command_chan, &clear_cmd, K_MSEC(100));
+
+	/* Claim status channel for atomic update */
 	if (zbus_chan_claim(&sensor_status_chan, K_MSEC(100)) != 0) {
+		LOG_ERR("Failed to claim sensor status channel");
 		return;
 	}
 
-	struct sensor_status *status = zbus_chan_msg(&sensor_status_chan);
-	uint8_t old_status = status->status;
+	/* Get direct pointer to status data (no copy needed) */
+	status = (struct sensor_status *)zbus_chan_const_msg(&sensor_status_chan);
+	old_status = status->status;
 
 	/* Handle START command */
-	if (control & SENSOR_CTRL_START) {
+	if (cmd.control & SENSOR_CTRL_START) {
 		LOG_INF("Starting sensor sampling");
 		status->status |= SENSOR_STATUS_RUNNING;
 	}
 
 	/* Handle STOP command */
-	if (control & SENSOR_CTRL_STOP) {
+	if (cmd.control & SENSOR_CTRL_STOP) {
 		LOG_INF("Stopping sensor sampling");
 		status->status &= ~SENSOR_STATUS_RUNNING;
 		status->data = 0;
 	}
 
 	/* Handle RESET command */
-	if (control & SENSOR_CTRL_RESET) {
+	if (cmd.control & SENSOR_CTRL_RESET) {
 		LOG_INF("Resetting sensor");
 		status->data = 0;
 		status->status = SENSOR_STATUS_READY;
 	}
 
+	/* Finish and notify if status changed */
 	zbus_chan_finish(&sensor_status_chan);
 
-	/* Notify if status changed */
 	if (status->status != old_status) {
 		zbus_chan_notify(&sensor_status_chan, K_NO_WAIT);
 	}
-	/* Commands are write-only, no need to clear them */
 }
 
 /* Process sensor configuration changes */
 static void sensor_process_config(void)
 {
-	/* Read config in place */
-	if (zbus_chan_claim(&sensor_config_chan, K_MSEC(100)) != 0) {
+	struct sensor_config config;
+
+	/* Read config */
+	if (zbus_chan_read(&sensor_config_chan, &config, K_MSEC(100)) != 0) {
 		return;
 	}
 
-	const struct sensor_config *config = zbus_chan_const_msg(&sensor_config_chan);
-	LOG_INF("Sensor config updated: threshold=%u", config->threshold);
-	zbus_chan_finish(&sensor_config_chan);
+	LOG_INF("Sensor config updated: threshold=%u", config.threshold);
 	/* Config is just stored, no action needed */
 }
 
@@ -195,14 +184,10 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 	LOG_INF("Sensor thread started");
 
 	/* Initialize poll events */
-	k_poll_event_init(&sensor_events[0],
-			  K_POLL_TYPE_SIGNAL,
-			  K_POLL_MODE_NOTIFY_ONLY,
+	k_poll_event_init(&sensor_events[0], K_POLL_TYPE_SIGNAL, K_POLL_MODE_NOTIFY_ONLY,
 			  &sensor_timer_signal);
-	k_poll_event_init(&sensor_events[1],
-			  K_POLL_TYPE_MSGQ_DATA_AVAILABLE,
-			  K_POLL_MODE_NOTIFY_ONLY,
-			  sensor_subscriber.queue);
+	k_poll_event_init(&sensor_events[1], K_POLL_TYPE_MSGQ_DATA_AVAILABLE,
+			  K_POLL_MODE_NOTIFY_ONLY, sensor_subscriber.queue);
 
 	/* Start the periodic timer (100ms interval) */
 	k_timer_start(&sensor_timer, K_MSEC(100), K_MSEC(100));
@@ -232,10 +217,4 @@ static void sensor_thread(void *p1, void *p2, void *p3)
 }
 
 /* Define and start thread automatically */
-K_THREAD_DEFINE(sensor_thread_id,
-		2048,
-		sensor_thread,
-		NULL, NULL, NULL,
-		K_PRIO_PREEMPT(5),
-		0,
-		0);
+K_THREAD_DEFINE(sensor_thread_id, 2048, sensor_thread, NULL, NULL, NULL, K_PRIO_PREEMPT(5), 0, 0);

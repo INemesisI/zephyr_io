@@ -13,8 +13,8 @@
 
 #include <zephyr/ztest.h>
 #include <zephyr/zbus/zbus.h>
-#include <zephyr/register_mapper/register_mapper.h>
-#include <zephyr/register_mapper/register_channel.h>
+#include <zephyr_io/register_mapper/register_mapper.h>
+#include <zephyr_io/register_mapper/register_channel.h>
 
 /* Test message structure */
 struct basic_msg {
@@ -23,15 +23,14 @@ struct basic_msg {
 };
 
 /* Test channel */
-REGISTER_CHAN_DEFINE(basic_chan, struct basic_msg, NULL, NULL,
-		     ZBUS_OBSERVERS_EMPTY,
+REGISTER_CHAN_DEFINE(basic_chan, struct basic_msg, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		     ({.value = 0, .status = 0}));
 
 /* Register mappings */
-REG_MAPPING_DEFINE(basic_value, 0x1000, &basic_chan, struct basic_msg,
-		   value, REG_TYPE_U32, REG_FLAGS_RW);
-REG_MAPPING_DEFINE(basic_status, 0x1010, &basic_chan, struct basic_msg,
-		   status, REG_TYPE_U8, REG_FLAGS_RW);
+REG_MAPPING_DEFINE(basic_value, 0x1000, &basic_chan, struct basic_msg, value, REG_TYPE_U32,
+		   REG_FLAGS_RW);
+REG_MAPPING_DEFINE(basic_status, 0x1010, &basic_chan, struct basic_msg, status, REG_TYPE_U8,
+		   REG_FLAGS_RW);
 
 ZTEST_SUITE(test_basic, NULL, NULL, NULL, NULL, NULL);
 
@@ -84,7 +83,7 @@ ZTEST(test_basic, test_invalid_access)
 	zassert_equal(ret, -EINVAL, "Should return -EINVAL for non-existent register");
 
 	/* Type mismatch */
-	val = REG_VALUE_U16(456);  /* Wrong type for U32 register */
+	val = REG_VALUE_U16(456); /* Wrong type for U32 register */
 	ret = reg_write_value(0x1000, val, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should return -EINVAL for type mismatch");
 }

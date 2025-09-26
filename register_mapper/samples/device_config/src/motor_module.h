@@ -12,8 +12,8 @@
 #include <zephyr/sys/util.h>
 
 /* Direction values */
-#define MOTOR_DIR_FORWARD  0
-#define MOTOR_DIR_REVERSE  1
+#define MOTOR_DIR_FORWARD 0
+#define MOTOR_DIR_REVERSE 1
 
 /* Motor configuration structure - stored in ZBUS channel */
 struct motor_config {

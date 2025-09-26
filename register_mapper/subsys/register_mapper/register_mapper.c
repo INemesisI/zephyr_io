@@ -6,9 +6,9 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
-#include <zephyr/register_mapper/register_mapper.h>
-#include <zephyr/register_mapper/register_types.h>
-#include <zephyr/register_mapper/register_channel.h>
+#include <zephyr_io/register_mapper/register_mapper.h>
+#include <zephyr_io/register_mapper/register_types.h>
+#include <zephyr_io/register_mapper/register_channel.h>
 #include <zephyr/init.h>
 #include <zephyr/sys/__assert.h>
 #include <zephyr/logging/log.h>
@@ -31,14 +31,8 @@ static const struct reg_mapping *find_register(uint16_t addr)
 size_t reg_type_size(enum reg_type type)
 {
 	static const uint8_t size_lut[REG_TYPE_COUNT] = {
-		[REG_TYPE_U8]  = 1,
-		[REG_TYPE_U16] = 2,
-		[REG_TYPE_U32] = 4,
-		[REG_TYPE_U64] = 8,
-		[REG_TYPE_I8]  = 1,
-		[REG_TYPE_I16] = 2,
-		[REG_TYPE_I32] = 4,
-		[REG_TYPE_I64] = 8,
+		[REG_TYPE_U8] = 1, [REG_TYPE_U16] = 2, [REG_TYPE_U32] = 4, [REG_TYPE_U64] = 8,
+		[REG_TYPE_I8] = 1, [REG_TYPE_I16] = 2, [REG_TYPE_I32] = 4, [REG_TYPE_I64] = 8,
 	};
 
 	if (type < REG_TYPE_COUNT) {
@@ -108,8 +102,8 @@ static int reg_write_common(uint16_t addr, struct reg_value value, bool notify, 
 
 	/* Check type compatibility */
 	if (map->type != value.type) {
-		LOG_WRN("Type mismatch for 0x%04x: expected %d, got %d",
-			addr, map->type, value.type);
+		LOG_WRN("Type mismatch for 0x%04x: expected %d, got %d", addr, map->type,
+			value.type);
 		return -EINVAL;
 	}
 
@@ -154,8 +148,8 @@ static int reg_write_common(uint16_t addr, struct reg_value value, bool notify, 
 		}
 	}
 
-	LOG_DBG("%s 0x%04x: type=%d size=%zu",
-		notify ? "Wrote" : "Block write", addr, value.type, size);
+	LOG_DBG("%s 0x%04x: type=%d size=%zu", notify ? "Wrote" : "Block write", addr, value.type,
+		size);
 	return 0;
 }
 
@@ -215,10 +209,10 @@ int reg_block_write_commit(k_timeout_t timeout)
 			/* Notify the channel */
 			int notify_ret = zbus_chan_notify(map->channel, timeout);
 			if (notify_ret != 0) {
-				LOG_WRN("Failed to notify channel %p: %d",
-					map->channel, notify_ret);
+				LOG_WRN("Failed to notify channel %p: %d", map->channel,
+					notify_ret);
 				if (ret == 0) {
-					ret = notify_ret;  /* Record first error */
+					ret = notify_ret; /* Record first error */
 				}
 			} else {
 				notify_count++;
@@ -262,10 +256,8 @@ int reg_validate_no_overlaps(void)
 			/* Check for overlap: start1 <= end2 && start2 <= end1 */
 			if (map1->address <= end2 && map2->address <= end1) {
 				LOG_ERR("Register overlap detected:");
-				LOG_ERR("  0x%04x-0x%04x (size %zu)",
-					map1->address, end1, size1);
-				LOG_ERR("  0x%04x-0x%04x (size %zu)",
-					map2->address, end2, size2);
+				LOG_ERR("  0x%04x-0x%04x (size %zu)", map1->address, end1, size1);
+				LOG_ERR("  0x%04x-0x%04x (size %zu)", map2->address, end2, size2);
 				overlap_count++;
 			}
 		}
