@@ -1,0 +1,49 @@
+# Copyright (c) 2024 Zephyr IO Project
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig WEAVE
+	bool "Weave message passing framework"
+	depends on POLL
+	help
+	  Enable the Weave message passing framework for inter-module
+	  communication using method calls and signals.
+
+if WEAVE
+
+config WEAVE_MAX_REQUEST_SIZE
+	int "Maximum request message size"
+	default 256
+	help
+	  Maximum size in bytes for request messages.
+
+config WEAVE_MAX_REPLY_SIZE
+	int "Maximum reply message size"
+	default 256
+	help
+	  Maximum size in bytes for reply messages in method calls.
+
+config WEAVE_MAX_PENDING_REQUESTS
+	int "Maximum number of pending requests"
+	default 8
+	help
+	  Maximum number of concurrent pending requests in the system.
+
+config WEAVE_DATA_HEAP_SIZE
+	int "Size of data heap for message payloads"
+	default 2048
+	help
+	  Size of the heap used for variable-sized message data buffers.
+	  This should be large enough to handle the expected concurrent
+	  message traffic with various payload sizes.
+
+config WEAVE_INIT_PRIORITY
+	int "Initialization priority"
+	default 90
+	help
+	  Weave initialization priority.
+
+module = WEAVE
+module-str = weave
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # WEAVE
