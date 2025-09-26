@@ -1215,7 +1215,7 @@ ZTEST(swift_io_unit_test, test_invalid_sink_mode)
 	};
 
 	k_spinlock_key_t key = k_spin_lock(&source1.lock);
-	sys_dlist_append(&source1.sinks, &test_conn.node);
+	sys_slist_append(&source1.sinks, &test_conn.node);
 	k_spin_unlock(&source1.lock, key);
 
 	/* Try to send - should handle invalid mode gracefully */
@@ -1229,7 +1229,7 @@ ZTEST(swift_io_unit_test, test_invalid_sink_mode)
 
 	/* Remove the test connection */
 	key = k_spin_lock(&source1.lock);
-	sys_dlist_remove(&test_conn.node);
+	sys_slist_find_and_remove(&source1.sinks, &test_conn.node);
 	k_spin_unlock(&source1.lock, key);
 
 	net_buf_unref(buf);
@@ -1391,7 +1391,7 @@ ZTEST(swift_io_unit_test, test_sink_null_handler)
 	struct swift_io_sink bad_sink;
 	struct swift_io_connection conn;
 	struct swift_io_source isolated_source = {
-		.sinks = SYS_DLIST_STATIC_INIT(&isolated_source.sinks),
+		.sinks = SYS_SLIST_STATIC_INIT(&isolated_source.sinks),
 		.lock = {},
 #ifdef CONFIG_SWIFT_IO_STATS
 		.send_count = ATOMIC_INIT(0),
@@ -1412,8 +1412,8 @@ ZTEST(swift_io_unit_test, test_sink_null_handler)
 	/* Connect bad sink to isolated source */
 	conn.source = &isolated_source;
 	conn.sink = &bad_sink;
-	sys_dnode_init(&conn.node);
-	sys_dlist_append(&isolated_source.sinks, &conn.node);
+	conn.node.next = NULL;
+	sys_slist_append(&isolated_source.sinks, &conn.node);
 
 	/* Try to send - should handle NULL handler gracefully */
 	buf = net_buf_alloc(&test_pool, K_NO_WAIT);
@@ -1427,7 +1427,7 @@ ZTEST(swift_io_unit_test, test_sink_null_handler)
 	net_buf_unref(buf);
 
 	/* Clean up */
-	sys_dlist_remove(&conn.node);
+	sys_slist_find_and_remove(&isolated_source.sinks, &conn.node);
 }
 
 /* Test queued sink with NULL msgq */
@@ -1471,11 +1471,11 @@ ZTEST(swift_io_unit_test, test_corrupted_connection_null_sink)
 	/* Create a corrupted connection with NULL sink and add to source1 */
 	bad_conn.source = &source1;
 	bad_conn.sink = NULL; /* Corrupted! */
-	sys_dnode_init(&bad_conn.node);
+	bad_conn.node.next = NULL;
 
 	/* Manually add the corrupted connection to source1's list */
 	key = k_spin_lock(&source1.lock);
-	sys_dlist_append(&source1.sinks, &bad_conn.node);
+	sys_slist_append(&source1.sinks, &bad_conn.node);
 	k_spin_unlock(&source1.lock, key);
 
 	/* Try to send - should skip the NULL sink but deliver to others */
@@ -1491,7 +1491,7 @@ ZTEST(swift_io_unit_test, test_corrupted_connection_null_sink)
 
 	/* Clean up - remove the bad connection */
 	key = k_spin_lock(&source1.lock);
-	sys_dlist_remove(&bad_conn.node);
+	sys_slist_find_and_remove(&source1.sinks, &bad_conn.node);
 	k_spin_unlock(&source1.lock, key);
 
 	/* Process any queued events */
@@ -1684,7 +1684,7 @@ ZTEST(swift_io_unit_test, test_zero_ref_after_handler)
 	struct swift_io_sink corrupt_sink;
 	struct swift_io_connection conn;
 	struct swift_io_source test_source = {
-		.sinks = SYS_DLIST_STATIC_INIT(&test_source.sinks),
+		.sinks = SYS_SLIST_STATIC_INIT(&test_source.sinks),
 		.lock = {},
 #ifdef CONFIG_SWIFT_IO_STATS
 		.send_count = ATOMIC_INIT(0),
@@ -1706,8 +1706,8 @@ ZTEST(swift_io_unit_test, test_zero_ref_after_handler)
 	/* Connect corrupt sink to test source */
 	conn.source = &test_source;
 	conn.sink = &corrupt_sink;
-	sys_dnode_init(&conn.node);
-	sys_dlist_append(&test_source.sinks, &conn.node);
+	conn.node.next = NULL;
+	sys_slist_append(&test_source.sinks, &conn.node);
 
 	/* Allocate and send buffer */
 	buf = net_buf_alloc(&test_pool, K_NO_WAIT);
@@ -1723,7 +1723,7 @@ ZTEST(swift_io_unit_test, test_zero_ref_after_handler)
 	net_buf_unref(buf);
 
 	/* Clean up connection */
-	sys_dlist_remove(&conn.node);
+	sys_slist_find_and_remove(&isolated_source.sinks, &conn.node);
 }
 
 /* Define small message queue to force -ENOMSG error */
@@ -1735,7 +1735,7 @@ ZTEST(swift_io_unit_test, test_msgq_enomsg_error_translation)
 	struct swift_io_sink test_sink;
 	struct swift_io_connection conn;
 	struct swift_io_source test_source = {
-		.sinks = SYS_DLIST_STATIC_INIT(&test_source.sinks),
+		.sinks = SYS_SLIST_STATIC_INIT(&test_source.sinks),
 		.lock = {},
 #ifdef CONFIG_SWIFT_IO_STATS
 		.send_count = ATOMIC_INIT(0),
@@ -1759,8 +1759,8 @@ ZTEST(swift_io_unit_test, test_msgq_enomsg_error_translation)
 	/* Connect sink to test source */
 	conn.source = &test_source;
 	conn.sink = &test_sink;
-	sys_dnode_init(&conn.node);
-	sys_dlist_append(&test_source.sinks, &conn.node);
+	conn.node.next = NULL;
+	sys_slist_append(&test_source.sinks, &conn.node);
 
 	/* Fill the queue with a dummy event to make it full */
 	dummy_event.sink = &test_sink;
@@ -1789,7 +1789,7 @@ ZTEST(swift_io_unit_test, test_msgq_enomsg_error_translation)
 	net_buf_unref(dummy_event.buf);
 
 	/* Remove connection */
-	sys_dlist_remove(&conn.node);
+	sys_slist_find_and_remove(&isolated_source.sinks, &conn.node);
 }
 
 /* Test zero ref count in swift_io_source_send_consume */
@@ -1825,7 +1825,7 @@ ZTEST(swift_io_unit_test, test_chaining_double_unref_bug)
 	int ret;
 
 	/* Initialize test source */
-	sys_dlist_init(&test_source.sinks);
+	sys_slist_init(&test_source.sinks);
 	test_source.lock = (struct k_spinlock){};
 #ifdef CONFIG_SWIFT_IO_STATS
 	atomic_clear(&test_source.send_count);
@@ -1844,8 +1844,8 @@ ZTEST(swift_io_unit_test, test_chaining_double_unref_bug)
 	/* Connect the chaining sink to test source */
 	conn.source = &test_source;
 	conn.sink = &chaining_sink;
-	sys_dnode_init(&conn.node);
-	sys_dlist_append(&test_source.sinks, &conn.node);
+	conn.node.next = NULL;
+	sys_slist_append(&test_source.sinks, &conn.node);
 
 	/* Allocate and send a buffer */
 	buf = net_buf_alloc(&test_pool, K_NO_WAIT);
@@ -1869,7 +1869,7 @@ ZTEST(swift_io_unit_test, test_chaining_double_unref_bug)
 	net_buf_unref(test_buf);
 
 	/* Clean up */
-	sys_dlist_remove(&conn.node);
+	sys_slist_find_and_remove(&isolated_source.sinks, &conn.node);
 }
 
 /* Test swift_io_sink_deliver public API */

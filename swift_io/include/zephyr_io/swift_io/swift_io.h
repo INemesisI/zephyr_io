@@ -57,7 +57,7 @@ struct swift_io_source {
 	const char *name;
 #endif
 	/** List of connections to sinks */
-	sys_dlist_t sinks;
+	sys_slist_t sinks;
 	/** Lock protecting the connection list */
 	struct k_spinlock lock;
 #ifdef CONFIG_SWIFT_IO_STATS
@@ -122,7 +122,7 @@ struct swift_io_connection {
 	/** Pointer to the sink */
 	struct swift_io_sink *sink;
 	/** Node for source's connection list */
-	sys_dnode_t node;
+	sys_snode_t node;
 };
 
 /* Only connections need to be in iterable sections for wiring at init time */
@@ -156,7 +156,7 @@ struct swift_io_connection {
  */
 #define SWIFT_IO_SOURCE_INITIALIZER(_name)                                                           \
 	{IF_ENABLED(CONFIG_SWIFT_IO_NAMES, (.name = #_name, )).sinks =                            \
-		 SYS_DLIST_STATIC_INIT(&_name.sinks),                                              \
+		 SYS_SLIST_STATIC_INIT(&_name.sinks),                                              \
 	 .lock = {},                                                                               \
 	 IF_ENABLED(CONFIG_SWIFT_IO_STATS,                                                        \
 		    (.send_count = ATOMIC_INIT(0), .queued_total = ATOMIC_INIT(0)))}

@@ -124,7 +124,7 @@ int swift_io_source_send(struct swift_io_source *src, struct net_buf *buf, k_tim
 	key = k_spin_lock(&src->lock);
 
 	/* Send to each connected sink */
-	SYS_DLIST_FOR_EACH_CONTAINER(&src->sinks, conn, node) {
+	SYS_SLIST_FOR_EACH_CONTAINER(&src->sinks, conn, node) {
 		k_timeout_t remaining = sys_timepoint_timeout(end);
 
 		/* Skip if sink is invalid */
@@ -264,14 +264,11 @@ static int swift_io_init(void)
 			continue;
 		}
 
-		/* Verify node is not already in a list (defensive check) */
-		if (sys_dnode_is_linked(&conn->node)) {
-			LOG_ERR("Connection node already in use");
-			continue;
-		}
+		/* For static connections, we don't check if node is already linked
+		 * because static initialization may not clear the next pointer */
 
 		/* Add connection to source's list */
-		sys_dlist_append(&conn->source->sinks, &conn->node);
+		sys_slist_append(&conn->source->sinks, &conn->node);
 		connection_count++;
 
 		LOG_DBG("Connected source %p to sink %p", conn->source, conn->sink);

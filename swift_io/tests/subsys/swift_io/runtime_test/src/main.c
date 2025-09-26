@@ -144,7 +144,7 @@ ZTEST(swift_io_runtime, test_basic_add_remove)
 	/* Setup connection */
 	conn.source = &runtime_source;
 	conn.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn.node);
+	conn.node.next = NULL;
 
 	/* Add connection */
 	ret = swift_io_connection_add(&conn);
@@ -175,15 +175,15 @@ ZTEST(swift_io_runtime, test_multiple_connections)
 	/* Setup multiple connections */
 	conn1.source = &runtime_source;
 	conn1.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn1.node);
+	conn1.node.next = NULL;
 
 	conn2.source = &runtime_source;
 	conn2.sink = &runtime_queued_sink;
-	sys_dnode_init(&conn2.node);
+	conn2.node.next = NULL;
 
 	conn3.source = &runtime_source;
 	conn3.sink = &runtime_secondary_sink;
-	sys_dnode_init(&conn3.node);
+	conn3.node.next = NULL;
 
 	/* Add all connections */
 	ret = swift_io_connection_add(&conn1);
@@ -242,7 +242,7 @@ ZTEST(swift_io_runtime, test_duplicate_connection)
 	/* Setup first connection */
 	conn1.source = &runtime_source;
 	conn1.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn1.node);
+	conn1.node.next = NULL;
 
 	ret = swift_io_connection_add(&conn1);
 	zassert_equal(ret, 0, "Failed to add first connection");
@@ -250,7 +250,7 @@ ZTEST(swift_io_runtime, test_duplicate_connection)
 	/* Try to add duplicate (same source and sink) */
 	conn2.source = &runtime_source;
 	conn2.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn2.node);
+	conn2.node.next = NULL;
 
 	ret = swift_io_connection_add(&conn2);
 	zassert_equal(ret, -EALREADY, "Should reject duplicate connection");
@@ -266,11 +266,11 @@ ZTEST(swift_io_runtime, test_connection_persistence)
 	/* Use static connections that persist across function calls */
 	static_conn1.source = &runtime_source;
 	static_conn1.sink = &runtime_immediate_sink;
-	sys_dnode_init(&static_conn1.node);
+	static_conn1.node.next = NULL;
 
 	static_conn2.source = &runtime_source2;
 	static_conn2.sink = &runtime_secondary_sink; /* Different sink for clarity */
-	sys_dnode_init(&static_conn2.node);
+	static_conn2.node.next = NULL;
 
 	/* Add connections */
 	ret = swift_io_connection_add(&static_conn1);
@@ -319,7 +319,7 @@ ZTEST(swift_io_runtime, test_null_parameters)
 	/* Test connection with NULL source */
 	conn.source = NULL;
 	conn.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn.node);
+	conn.node.next = NULL;
 
 	ret = swift_io_connection_add(&conn);
 	zassert_equal(ret, -EINVAL, "Should reject NULL source");
@@ -327,7 +327,7 @@ ZTEST(swift_io_runtime, test_null_parameters)
 	/* Test connection with NULL sink */
 	conn.source = &runtime_source;
 	conn.sink = NULL;
-	sys_dnode_init(&conn.node);
+	conn.node.next = NULL;
 
 	ret = swift_io_connection_add(&conn);
 	zassert_equal(ret, -EINVAL, "Should reject NULL sink");
@@ -341,7 +341,7 @@ ZTEST(swift_io_runtime, test_already_connected)
 	/* Setup and add connection */
 	conn.source = &runtime_source;
 	conn.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn.node);
+	conn.node.next = NULL;
 
 	ret = swift_io_connection_add(&conn);
 	zassert_equal(ret, 0, "Failed to add connection");
@@ -362,7 +362,7 @@ ZTEST(swift_io_runtime, test_remove_not_connected)
 	/* Setup connection but don't add it */
 	conn.source = &runtime_source;
 	conn.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn.node);
+	conn.node.next = NULL;
 
 	/* Try to remove non-existent connection */
 	ret = swift_io_connection_remove(&conn);
@@ -377,7 +377,7 @@ ZTEST(swift_io_runtime, test_double_remove)
 	/* Setup and add connection */
 	conn.source = &runtime_source;
 	conn.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn.node);
+	conn.node.next = NULL;
 
 	ret = swift_io_connection_add(&conn);
 	zassert_equal(ret, 0, "Failed to add connection");
@@ -400,7 +400,7 @@ ZTEST(swift_io_runtime, test_stack_allocation_detection)
 	/* Create stack-allocated connection */
 	stack_conn.source = &runtime_source;
 	stack_conn.sink = &runtime_immediate_sink;
-	sys_dnode_init(&stack_conn.node);
+	stack_conn.node.next = NULL;
 
 	/* Try to add it - should be rejected in non-test builds */
 	ret = swift_io_connection_add(&stack_conn);
@@ -425,7 +425,7 @@ ZTEST(swift_io_runtime, test_heap_allocation)
 
 	heap_conn->source = &runtime_source;
 	heap_conn->sink = &runtime_immediate_sink;
-	sys_dnode_init(&heap_conn->node);
+	heap_conn->node.next = NULL;
 
 	/* Should be accepted (not on stack) */
 	ret = swift_io_connection_add(heap_conn);
@@ -445,16 +445,16 @@ ZTEST(swift_io_runtime, test_cross_source_connections)
 	/* Connect different sources to same sink */
 	conn1.source = &runtime_source;
 	conn1.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn1.node);
+	conn1.node.next = NULL;
 
 	conn2.source = &runtime_source2;
 	conn2.sink = &runtime_immediate_sink;
-	sys_dnode_init(&conn2.node);
+	conn2.node.next = NULL;
 
 	/* Connect same source to different sink */
 	conn3.source = &runtime_source;
 	conn3.sink = &runtime_secondary_sink;
-	sys_dnode_init(&conn3.node);
+	conn3.node.next = NULL;
 
 	/* Add all connections */
 	ret = swift_io_connection_add(&conn1);

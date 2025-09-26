@@ -45,20 +45,19 @@ int swift_io_connection_add(struct swift_io_connection *conn)
 
 	key = k_spin_lock(&conn->source->lock);
 
-	if (sys_dnode_is_linked(&conn->node)) {
-		k_spin_unlock(&conn->source->lock, key);
-		return -EBUSY;
-	}
-
-	/* Check for duplicate connection */
-	SYS_DLIST_FOR_EACH_CONTAINER(&conn->source->sinks, existing, node) {
+	/* Check if this connection is already in the list or is a duplicate */
+	SYS_SLIST_FOR_EACH_CONTAINER(&conn->source->sinks, existing, node) {
+		if (existing == conn) {
+			k_spin_unlock(&conn->source->lock, key);
+			return -EBUSY;
+		}
 		if (existing->sink == conn->sink) {
 			k_spin_unlock(&conn->source->lock, key);
 			return -EALREADY;
 		}
 	}
 
-	sys_dlist_append(&conn->source->sinks, &conn->node);
+	sys_slist_append(&conn->source->sinks, &conn->node);
 	k_spin_unlock(&conn->source->lock, key);
 
 	LOG_DBG("Connected source %p to sink %p", conn->source, conn->sink);
@@ -75,12 +74,11 @@ int swift_io_connection_remove(struct swift_io_connection *conn)
 
 	key = k_spin_lock(&conn->source->lock);
 
-	if (!sys_dnode_is_linked(&conn->node)) {
+	if (!sys_slist_find_and_remove(&conn->source->sinks, &conn->node)) {
 		k_spin_unlock(&conn->source->lock, key);
 		return -ENOENT;
 	}
 
-	sys_dlist_remove(&conn->node);
 	k_spin_unlock(&conn->source->lock, key);
 
 	LOG_DBG("Disconnected source %p from sink %p", conn->source, conn->sink);
