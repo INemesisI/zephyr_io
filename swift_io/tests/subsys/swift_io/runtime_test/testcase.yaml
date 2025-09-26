@@ -1,0 +1,5 @@
+tests:
+  swift_io.runtime:
+    harness: ztest
+    tags: swift_io
+    platform_allow: native_sim

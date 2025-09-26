@@ -1,5 +1,0 @@
-tests:
-  packet_io.runtime:
-    harness: ztest
-    tags: packet_io
-    platform_allow: native_sim

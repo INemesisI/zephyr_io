@@ -1,0 +1,4 @@
+name: swift_io
+build:
+  cmake: .
+  kconfig: Kconfig

@@ -1,4 +1,0 @@
-name: packet_io
-build:
-  cmake: .
-  kconfig: Kconfig
