@@ -22,11 +22,10 @@
  * @brief Temperature sensor payload format
  */
 struct temp_sensor_data {
-  int16_t
-      temperature_c; /** Temperature in Celsius * 100 (e.g., 2537 = 25.37°C) */
-  int16_t humidity_rh;   /** Relative humidity * 100 (e.g., 4532 = 45.32% RH) */
-  uint16_t sensor_id;    /** Sensor identifier */
-  uint16_t sample_count; /** Number of samples averaged */
+	int16_t temperature_c; /** Temperature in Celsius * 100 (e.g., 2537 = 25.37°C) */
+	int16_t humidity_rh;   /** Relative humidity * 100 (e.g., 4532 = 45.32% RH) */
+	uint16_t sensor_id;    /** Sensor identifier */
+	uint16_t sample_count; /** Number of samples averaged */
 } __packed;
 
 /* ========================================================================== */

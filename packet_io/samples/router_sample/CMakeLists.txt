@@ -12,11 +12,11 @@ target_include_directories(app PRIVATE
 
 # Source files
 target_sources(app PRIVATE
-  # Generic router library
-  src/lib/packet_router.c
+  # Generic router framework
+  src/framework/packet_router.c
 
-  # IoTSense protocol router
-  src/iotsense_router.c
+  # Protocol implementations
+  src/protocols/iotsense_router.c
 
   # Application modules
   src/modules/tcp_server.c

@@ -7,7 +7,7 @@
 #ifndef IOTSENSE_ROUTER_H
 #define IOTSENSE_ROUTER_H
 
-#include "lib/packet_router.h"
+#include "framework/packet_router.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -30,9 +30,9 @@
  * Total header size: 4 bytes
  */
 struct iotsense_header {
-  uint8_t version;      /** Protocol version (0x01) */
-  uint8_t packet_id;    /** Packet type identifier */
-  uint16_t payload_len; /** Length of payload data */
+	uint8_t version;      /** Protocol version (0x01) */
+	uint8_t packet_id;    /** Packet type identifier */
+	uint16_t payload_len; /** Length of payload data */
 } __packed;
 
 /* ========================================================================== */
@@ -61,8 +61,8 @@ ROUTER_DECLARE(iotsense_router);
 #define PKT_ID_INVALID 0x00 /** Invalid/error packet */
 
 /* Used packet IDs in this sample */
-#define PKT_ID_SENSOR_TEMP 0x01   /** Temperature sensor data */
-#define PKT_ID_ACTUATOR_LED 0x02  /** LED control commands */
+#define PKT_ID_SENSOR_TEMP   0x01 /** Temperature sensor data */
+#define PKT_ID_ACTUATOR_LED  0x02 /** LED control commands */
 #define PKT_ID_SYSTEM_CONFIG 0x09 /** System configuration */
 
 #endif /* IOTSENSE_ROUTER_H */

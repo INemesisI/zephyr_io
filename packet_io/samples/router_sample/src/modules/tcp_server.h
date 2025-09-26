@@ -20,7 +20,7 @@ extern "C" {
 /**
  * @brief TCP server configuration
  */
-#define TCP_SERVER_PORT 8080
+#define TCP_SERVER_PORT  8080
 #define RECV_BUFFER_SIZE 1024
 
 /**
@@ -29,9 +29,8 @@ extern "C" {
  * These are the packet sources and sinks provided by the TCP server
  * for connecting to the router system.
  */
-PACKET_SOURCE_DECLARE(
-    tcp_server_source);               /* TCP receive - packets from network */
-PACKET_SINK_DECLARE(tcp_server_sink); /* TCP transmit - packets to network */
+PACKET_SOURCE_DECLARE(tcp_server_source); /* TCP receive - packets from network */
+PACKET_SINK_DECLARE(tcp_server_sink);     /* TCP transmit - packets to network */
 
 #ifdef __cplusplus
 }

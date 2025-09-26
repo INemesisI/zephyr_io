@@ -10,11 +10,11 @@
 
 /* LED toggle command packet */
 struct led_toggle_cmd {
-  uint8_t command;
+	uint8_t command;
 } __packed;
 
 #define LED_TOGGLE_CMD 0x02
-#define LED_ID_STATUS 0
+#define LED_ID_STATUS  0
 
 PACKET_SINK_DECLARE(led_controller_sink);
 

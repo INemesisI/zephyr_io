@@ -17,15 +17,15 @@
 
 /* Ping command packet */
 struct ping_cmd {
-    uint8_t command;
-    uint16_t seq_num;
+	uint8_t command;
+	uint16_t seq_num;
 } __packed;
 
 /* Ping response packet */
 struct ping_resp {
-    uint8_t command;
-    uint16_t seq_num;
-    uint32_t timestamp;
+	uint8_t command;
+	uint16_t seq_num;
+	uint32_t timestamp;
 } __packed;
 
 #define PING_CMD 0x01

@@ -1,179 +1,198 @@
 # Packet Router Sample
 
-Demonstrates a generalized packet router with protocol-agnostic design.
+Advanced packet routing demonstration showcasing the power of the packet_io subsystem with a reusable, protocol-agnostic routing framework.
+
+## Overview
+
+This sample demonstrates a sophisticated packet routing architecture with:
+
+- **Generic routing framework** - Reusable for any protocol
+- **Bidirectional transformation** - Add/strip protocol headers transparently
+- **Zero-copy operation** - Leverages packet_io's reference counting
+- **Real-world networking** - TCP server integration with fragmented packet handling
+- **Compile-time wiring** - Static routing tables with minimal overhead
 
 ## Architecture
 
-### Components
+### Two-Layer Design
 
-1. **Generic Router** (`packet_router.h/c`) - Protocol-agnostic routing framework
-2. **IoTSense Router** (`iotsense_router.h/c`) - IoTSense protocol implementation with 4-byte headers and packet IDs
-3. **Application Modules** - Independent packet producers/consumers
+```
+┌──────────────────────────────────────────────────────────┐
+│                   Application Layer                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐    │
+│  │ Temp     │  │ LED      │  │ System   │  │ TCP    │    │
+│  │ Sensor   │  │ Control  │  │ Control  │  │ Server │    │
+│  └─────┬────┘  └────▲─────┘  └─────▲────┘  └────▲───┘    │
+│        │            │              │            │        │
+├────────┼────────────┼──────────────┼────────────┼────────┤
+│        │     Protocol Router Layer │            │        │
+│        │            │              │            │        │
+│  ┌─────▼────────────┴──────────────▼────────────▼─────┐  │
+│  │            IoTSense Protocol Router                │  │
+│  │  - Adds/strips 4-byte headers                      │  │
+│  │  - Routes by packet ID                             │  │
+│  │  - Built on generic framework                      │  │
+│  └─────▲────────────▲──────────────▲────────────▲─────┘  │
+│        │            │              │            │        │
+├────────┼────────────┼──────────────┼────────────┼────────┤
+│        │     Generic Router Framework           │        │
+│        │            │              │            │        │
+│  ┌─────▼────────────▼──────────────▼────────────▼─────┐  │
+│  │         packet_router.c/h (Reusable)               │  │
+│  │  - Protocol-agnostic routing engine                │  │
+│  │  - Compile-time route registration                 │  │
+│  │  - Bidirectional packet transformation             │  │
+│  └────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────┘
+```
 
-### Application Modules
+### Packet Flow
 
-- **Temperature Sensor** - Outbound-only, ID 0x01, periodic data
-- **System Control** - Bidirectional, ID 0x09, ping/pong only
-- **LED Controller** - Inbound-only, ID 0x02, simple toggle
-- **TCP Server** - Network interface, handles client connections and packet transmission
+**Outbound (Sensor → Network):**
 
-## Key Features
+```
+Sensor generates data → Router adds header → TCP server transmits
+     [payload]      →    [hdr|payload]    →    Network
+```
 
-### Protocol-Specific Implementation
+**Inbound (Network → Actuator):**
 
-The router is application-specific, owning its network interfaces and protocol handling:
+```
+Network packet → Router strips header → LED controller processes
+  [hdr|payload] →      [payload]      →    Toggle LED
+```
+
+## Key Concepts Demonstrated
+
+### 1. Protocol-Agnostic Framework
+
+The generic `packet_router` framework (`src/framework/`) can be reused for any protocol. It provides:
+
+- Route registration macros
+- Header manipulation hooks
+- Statistics tracking
+- Zero-copy packet distribution
+
+### 2. Static Routing Tables
+
+Routes are defined at compile-time using macros:
 
 ```c
-ROUTER_DEFINE(iotsense_router, inbound_handler, outbound_handler);
+// Inbound: Network packets with ID 0x02 go to LED controller
+ROUTER_INBOUND_ROUTE_DEFINE(iotsense_router, 0x02, led_controller_sink);
+
+// Outbound: Temperature sensor packets get ID 0x01 header
+ROUTER_OUTBOUND_ROUTE_DEFINE(iotsense_router, 0x01, temperature_sensor_source);
 ```
 
-### Route Definition Macros
-```c
-ROUTER_INBOUND_ROUTE_DEFINE(router, packet_id, app_sink);
-ROUTER_OUTBOUND_ROUTE_DEFINE(router, packet_id, app_source);
-```
+### 3. IoTSense Protocol
 
-### Sparse Packet ID Support
-
-Handles non-contiguous IDs (1, 9, 200, 500) efficiently with O(n) lookup.
-
-### Zero-Copy Operation
-
-Header buffers are chained with payload buffers without copying data.
-
-## Packet Flow
+Simple 4-byte header demonstration:
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Temperature    │───▶│   IoTSense       │───▶│   TCP Server    │
-│  Sensor         │    │   Router         │    │   Port 8080     │
-│  (ID: 0x01)     │    │                  │    │       ↕         │
-└─────────────────┘    │                  │    │   TCP Client    │
-                       │                  │    │                 │
-┌─────────────────┐    │                  │    │                 │
-│  System         │◄──▶│                  │◄──▶│                 │
-│  Control        │    │                  │    │                 │
-│  (ID: 0x09)     │    │                  │    │                 │
-└─────────────────┘    │                  │    │                 │
-                       │                  │    │                 │
-┌─────────────────┐    │                  │    │                 │
-│  LED            │◄───│                  │◄───│                 │
-│  Controller     │    │                  │    │                 │
-│  (ID: 0x02)     │    │                  │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+┌──────────┬───────────┬──────────────┐
+│ Version  │ Packet ID │ Payload Len  │
+│ (1 byte) │ (1 byte)  │  (2 bytes)   │
+└──────────┴───────────┴──────────────┘
 ```
+
+### 4. Zero-Copy Distribution
+
+Multiple sinks can receive the same packet without copying:
+
+- Router increments reference count for each sink
+- Each sink releases its reference when done
+- Buffer freed when last reference released
 
 ## Building and Running
 
-```bash
-# Set up environment
-export ZEPHYR_EXTRA_MODULES=$PWD/packet_io
+### Native Simulator (Default)
 
-# Build the sample
-west build -p always -b native_sim packet_io/samples/router_sample
+```bash
+# Build for native_sim (uses host networking)
+west build -b native_sim packet_io/samples/router_sample
 
 # Run the sample
 ./build/zephyr/zephyr.exe
 ```
 
-## Expected Output
+The build system automatically selects the appropriate configuration from the `boards/` directory.
 
-```
-Packet Router Sample - Simplified IoTSense Protocol
-[00:00:00.000] <inf> tcp_server: TCP server listening on port 8080
-[00:00:00.000] <inf> packet_router: Router ready: 2 inbound, 2 outbound routes
-[00:00:00.000] <inf> iotsense_router: IoTSense router initialized
-[00:00:00.000] <inf> tcp_server: TCP server listening on port 8080
-[00:00:00.000] <inf> temp_sensor: Temperature sensor started
-[00:00:00.000] <inf> temp_sensor: Temp: 25.00°C, Humidity: 48.24% (sample #1)
-[00:00:00.000] <inf> tcp_server: TCP TX: packet_id=0x0001, 12 bytes
+## Testing
 
-# When TCP client connects and sends ping:
-[00:00:05.000] <inf> tcp_server: TCP RX: packet_id=0x0009, 3 bytes
-[00:00:05.001] <inf> sys_control: Ping #1 (seq=0)
-[00:00:05.002] <inf> tcp_server: TCP TX: packet_id=0x0009, 7 bytes
+### TCP Client Tool
 
-# When LED toggle command received:
-[00:00:08.000] <inf> tcp_server: TCP RX: packet_id=0x0002, 1 bytes
-[00:00:08.001] <inf> led_controller: LED toggle #1: ON
-```
-
-## 🧪 Testing with TCP Client
-
-The sample includes a real TCP server on port 8080. You can:
-
-1. **Connect with Python test client**: Use the pytest tests in `pytest/` directory
-2. **Temperature Data**: Automatically sent every 200ms to connected clients
-3. **System Commands**: Send ping commands and receive pong responses
-4. **LED Control**: Send toggle commands to switch LED state
-5. **Error Handling**: Unknown packet IDs are gracefully dropped
-6. **Statistics**: Router performance metrics every 30 seconds
-
-### Quick Demo with Python Client
-
-A standalone Python client is provided for easy testing:
+A Python client is provided for testing:
 
 ```bash
-# In terminal 1: Start the router sample
-./build/zephyr/zephyr.exe
+# Run demo sequence
+python3 tools/tcp_client.py
 
-# In terminal 2: Run the demo client
-cd packet_io/samples/router_sample
-python3 tcp_client_demo.py --demo
+# Send ping command
+python3 tools/tcp_client.py ping
 
-# Or run interactive mode:
-python3 tcp_client_demo.py
+# Toggle LED
+python3 tools/tcp_client.py led
+
+# Monitor sensor data
+python3 tools/tcp_client.py monitor --time 30
 ```
 
-The demo script demonstrates:
-- Receiving temperature sensor data
-- Sending ping commands and receiving pong responses
-- LED toggle commands
-- Interactive mode for manual testing
-
-### Running Automated Tests
+### Automated Tests
 
 ```bash
-# Or run just the router sample in isolation (with venv activated)
-# Set pytest alias to avoid plugin conflicts
-alias pytest="python -m pytest"
-ZEPHYR_EXTRA_MODULES=$PWD/packet_io \
-  west twister -T packet_io/samples/router_sample -p native_sim \
-  -O twister-out --no-clean -v
+# Run pytest suite
+pytest tests/test_router_tcp.py
 ```
 
-The main script automatically:
-- Builds all packet_io tests and samples
-- Runs unit tests, integration tests, and sample tests
-- Includes the router sample pytest scenarios
-- Provides a summary of all test results
+## Project Structure
 
-## 🎯 Module Design Philosophy
+```
+router_sample/
+├── boards/              # Board-specific configurations
+│   ├── native_sim.conf  # Native simulator settings
+├── src/
+│   ├── framework/       # Generic routing framework (reusable)
+│   │   ├── packet_router.h
+│   │   └── packet_router.c
+│   ├── protocols/       # Protocol implementations
+│   │   ├── iotsense_router.h
+│   │   └── iotsense_router.c
+│   ├── modules/         # Application modules
+│   │   ├── temperature_sensor.c/h
+│   │   ├── tcp_server.c/h
+│   │   ├── system_control.c/h
+│   │   └── led_controller.c/h
+│   └── main.c
+├── tools/               # Testing utilities
+│   └── tcp_client.py
+├── tests/               # Test suite
+│   └── test_router_tcp.py
+├── prj.conf            # Platform-agnostic configuration
+├── CMakeLists.txt
+├── testcase.yaml
+└── sections-rom.ld     # Linker sections for routing tables
+```
 
-### Module Independence
+## Configuration Options
 
-Modules only:
-- Generate or consume application payloads
-- Use packet_io sources/sinks for communication
+Key options in `prj.conf`:
 
-Modules have no knowledge of:
-- Network protocols or headers
-- Other modules or their implementations
-- Router internals or packet IDs
+- `CONFIG_PACKET_IO_STATS=y` - Enable statistics tracking
+- `CONFIG_PACKET_IO_NAMES=y` - Debug names for sources/sinks
+- `CONFIG_PACKET_IO_LOG_LEVEL=2` - Logging verbosity
 
-### Router Architecture
+## Performance
 
-The system uses a two-layer router design:
+The sample demonstrates:
 
-**Generic Router Library** (`packet_router.h/c`):
-- Protocol-agnostic routing framework
-- Route registration and lookup
-- Packet distribution mechanics
-- Statistics and connection management
+- **Zero-copy operation** - No data copying during routing
+- **Compile-time wiring** - No runtime overhead for route lookup
+- **Lock-free packet distribution** - Using packet_io's atomic operations
+- **Efficient buffer management** - Reference counting prevents leaks
 
-**Protocol-Specific Router** (`iotsense_router.c`):
-- Provides sink/source for receiving/sending packets
-- Implements protocol handling
-  - Strips protocol from inbound packets and delivers payloads to application modules
-  - Adds protocol to outbound payloads from  application modules
-- Packet validation and error handling
+## See Also
+
+- [packet_io Design Document](../../packet_io_design.md)
+- [Basic Packet Routing Sample](../basic_packet_routing/)
+- [Zephyr Networking Documentation](https://docs.zephyrproject.org/latest/connectivity/networking/)

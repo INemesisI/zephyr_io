@@ -9,8 +9,8 @@ tests:
     harness: pytest
     harness_config:
       pytest_root:
-        - "pytest/test_router_tcp.py"
-    extra_args: OVERLAY_CONFIG="overlay-native.conf"
+        - "tests/test_router_tcp.py"
+    # No overlay needed - board configs are automatically selected
     platform_allow:
       - native_sim
     integration_platforms:
