@@ -309,33 +309,32 @@ Dynamic connections can be added/removed at runtime when
 
 .. code-block:: c
 
-    /* IMPORTANT: Connection must be static or allocated, NOT stack-local */
-    /* Debug builds will detect and reject stack allocations automatically */
-    static struct flow_connection runtime_conn;
+    /* Connect source and sink at runtime */
+    int ret = flow_runtime_connect(&sensor_source, &debug_sink);
+    if (ret == 0) {
+        LOG_INF("Connected successfully");
+    } else if (ret == -ENOMEM) {
+        LOG_ERR("Connection pool exhausted");
+    }
 
-    /* Add runtime connection */
-    runtime_conn.source = &sensor_source;
-    runtime_conn.sink = &debug_sink;
-    flow_connection_add(&runtime_conn);
-
-    /* Remove runtime connection */
-    flow_connection_remove(&runtime_conn);
+    /* Disconnect when no longer needed */
+    flow_runtime_disconnect(&sensor_source, &debug_sink);
 
     /* Example: Conditional debug monitoring */
     void enable_debug_monitoring(bool enable)
     {
-        /* Connection MUST be static - persists across function calls */
-        static struct flow_connection debug_conn = {
-            .source = &data_source,
-            .sink = &debug_sink
-        };
-
         if (enable) {
-            flow_connection_add(&debug_conn);
+            flow_runtime_connect(&data_source, &debug_sink);
         } else {
-            flow_connection_remove(&debug_conn);
+            flow_runtime_disconnect(&data_source, &debug_sink);
         }
     }
+
+.. note::
+   Runtime connections are allocated from an internal pool of size
+   :kconfig:option:`CONFIG_FLOW_RUNTIME_CONNECTION_POOL_SIZE` (default 16).
+   The pool size should be configured based on your application's maximum
+   concurrent runtime connections.
 
 Advanced Usage
 ==============
@@ -757,6 +756,8 @@ Related configuration options:
 * :kconfig:option:`CONFIG_FLOW_NAMES` - Enable debug names for sources and sinks
 * :kconfig:option:`CONFIG_FLOW_LOG_LEVEL` - Set logging level (0-4)
 * :kconfig:option:`CONFIG_FLOW_INIT_PRIORITY` - System initialization priority (default 99)
+* :kconfig:option:`CONFIG_FLOW_RUNTIME_OBSERVERS` - Enable runtime connections
+* :kconfig:option:`CONFIG_FLOW_RUNTIME_CONNECTION_POOL_SIZE` - Size of runtime connection pool (default 16)
 
 Required dependencies:
 
@@ -766,9 +767,11 @@ Example configuration:
 
 .. code-block:: kconfig
 
-    # Enable Flow with statistics
+    # Enable Flow with statistics and runtime connections
     CONFIG_FLOW=y
     CONFIG_FLOW_STATS=y
+    CONFIG_FLOW_RUNTIME_OBSERVERS=y
+    CONFIG_FLOW_RUNTIME_CONNECTION_POOL_SIZE=32  # Increase if needed
     CONFIG_FLOW_LOG_LEVEL=2
 
     # Required dependencies

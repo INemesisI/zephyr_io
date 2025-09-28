@@ -31,15 +31,17 @@ config FLOW_RUNTIME_OBSERVERS
 	  Enable runtime registration and deregistration of observers.
 	  If disabled, all connections must be defined at compile time.
 
-config FLOW_RUNTIME_STACK_CHECK
-	bool "Check for stack-allocated runtime connections"
-	default y if DEBUG
-	depends on FLOW_RUNTIME_OBSERVERS && THREAD_STACK_INFO
+config FLOW_RUNTIME_CONNECTION_POOL_SIZE
+	int "Size of runtime connection pool"
+	default 16
+	range 1 256
+	depends on FLOW_RUNTIME_OBSERVERS
 	help
-	  Enable detection of stack-allocated connection structures when
-	  adding runtime connections. This helps catch a common error where
-	  connections are mistakenly allocated on the stack instead of
-	  statically or dynamically. Automatically enabled in debug builds.
+	  Number of runtime connections that can be allocated from the
+	  internal pool. Each connection uses approximately 32 bytes.
+	  Set this based on the maximum number of runtime connections
+	  your application needs simultaneously.
+
 
 config FLOW_INIT_PRIORITY
 	int "Flow subsystem initialization priority"

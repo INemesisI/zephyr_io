@@ -6,11 +6,23 @@
 
 #include <errno.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/util.h>
 #include <zephyr_io/flow/flow.h>
 
 LOG_MODULE_DECLARE(flow, CONFIG_FLOW_LOG_LEVEL);
 
-int flow_connection_add(struct flow_connection *conn)
+/* Runtime connection pool entry */
+struct flow_runtime_connection {
+	struct flow_connection conn;
+	bool in_use;
+};
+
+/* Static pool of runtime connections */
+static struct flow_runtime_connection runtime_pool[CONFIG_FLOW_RUNTIME_CONNECTION_POOL_SIZE];
+static struct k_mutex pool_mutex = Z_MUTEX_INITIALIZER(pool_mutex);
+
+/* Internal helper to add a connection to the source's list */
+static int flow_connection_add_internal(struct flow_connection *conn)
 {
 	struct flow_connection *existing;
 	k_spinlock_key_t key;
@@ -18,30 +30,6 @@ int flow_connection_add(struct flow_connection *conn)
 	if (!conn || !conn->source || !conn->sink) {
 		return -EINVAL;
 	}
-
-#ifdef CONFIG_FLOW_RUNTIME_STACK_CHECK
-	/* Try to detect if connection might be stack-allocated.
-	 * This is a heuristic check - compare pointer against current thread's stack
-	 * bounds. Note: This won't catch all cases but can help during development.
-	 */
-	struct k_thread *current = k_current_get();
-	if (current && current->stack_info.start) {
-		uintptr_t stack_start = (uintptr_t)current->stack_info.start;
-		uintptr_t stack_end = stack_start + current->stack_info.size;
-		uintptr_t conn_addr = (uintptr_t)conn;
-
-		if (conn_addr >= stack_start && conn_addr < stack_end) {
-			LOG_ERR("Connection at %p appears to be stack-allocated! "
-				"This is unsafe if connection outlives the function. "
-				"Use static or dynamic allocation instead.",
-				conn);
-/* Allow in tests for testing purposes */
-#ifndef CONFIG_ZTEST
-			return -EINVAL;
-#endif
-		}
-	}
-#endif
 
 	key = k_spin_lock(&conn->source->lock);
 
@@ -64,7 +52,8 @@ int flow_connection_add(struct flow_connection *conn)
 	return 0;
 }
 
-int flow_connection_remove(struct flow_connection *conn)
+/* Internal helper to remove a connection from the source's list */
+static int flow_connection_remove_internal(struct flow_connection *conn)
 {
 	k_spinlock_key_t key;
 
@@ -83,4 +72,91 @@ int flow_connection_remove(struct flow_connection *conn)
 
 	LOG_DBG("Disconnected source %p from sink %p", conn->source, conn->sink);
 	return 0;
+}
+
+int flow_runtime_connect(struct flow_source *source, struct flow_sink *sink)
+{
+	struct flow_runtime_connection *entry = NULL;
+	int ret;
+
+	if (!source || !sink) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&pool_mutex, K_FOREVER);
+
+	/* Check if already connected */
+	ARRAY_FOR_EACH_PTR(runtime_pool, conn_entry) {
+		if (conn_entry->in_use && conn_entry->conn.source == source &&
+		    conn_entry->conn.sink == sink) {
+			k_mutex_unlock(&pool_mutex);
+			return -EALREADY;
+		}
+	}
+
+	/* Find free slot */
+	ARRAY_FOR_EACH_PTR(runtime_pool, conn_entry) {
+		if (!conn_entry->in_use) {
+			entry = conn_entry;
+			entry->in_use = true;
+			entry->conn.source = source;
+			entry->conn.sink = sink;
+			break;
+		}
+	}
+
+	k_mutex_unlock(&pool_mutex);
+
+	if (!entry) {
+		LOG_WRN("Runtime connection pool exhausted (size=%d)",
+			CONFIG_FLOW_RUNTIME_CONNECTION_POOL_SIZE);
+		return -ENOMEM;
+	}
+
+	/* Add using internal function */
+	ret = flow_connection_add_internal(&entry->conn);
+	if (ret < 0) {
+		k_mutex_lock(&pool_mutex, K_FOREVER);
+		entry->in_use = false;
+		k_mutex_unlock(&pool_mutex);
+		return ret;
+	}
+
+	return 0;
+}
+
+int flow_runtime_disconnect(struct flow_source *source, struct flow_sink *sink)
+{
+	struct flow_runtime_connection *entry = NULL;
+	int ret;
+
+	if (!source || !sink) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&pool_mutex, K_FOREVER);
+
+	/* Find the connection */
+	ARRAY_FOR_EACH_PTR(runtime_pool, conn_entry) {
+		if (conn_entry->in_use && conn_entry->conn.source == source &&
+		    conn_entry->conn.sink == sink) {
+			entry = conn_entry;
+			break;
+		}
+	}
+
+	k_mutex_unlock(&pool_mutex);
+
+	if (!entry) {
+		return -ENOENT;
+	}
+
+	ret = flow_connection_remove_internal(&entry->conn);
+	if (ret == 0) {
+		k_mutex_lock(&pool_mutex, K_FOREVER);
+		entry->in_use = false;
+		k_mutex_unlock(&pool_mutex);
+	}
+
+	return ret;
 }

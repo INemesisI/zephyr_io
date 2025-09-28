@@ -464,39 +464,42 @@ int flow_sink_deliver_consume(struct flow_sink *sink, struct net_buf *buf, k_tim
 
 #ifdef CONFIG_FLOW_RUNTIME_OBSERVERS
 /**
- * @brief Connect a source and sink at runtime
+ * @brief Create a runtime connection between source and sink
  *
  * @note This function is only available when CONFIG_FLOW_RUNTIME_OBSERVERS is
  * enabled.
  *
- * The caller must provide a flow_connection structure with source
- * and sink fields initialized. This structure must remain valid
- * for as long as the connection exists.
+ * Creates a runtime connection between the specified source and sink.
+ * The connection is allocated from an internal pool of size
+ * CONFIG_FLOW_RUNTIME_CONNECTION_POOL_SIZE.
  *
- * @warning The connection structure MUST be static or dynamically allocated,
- *          NOT a stack variable. The structure is linked into the source's
- *          connection list and must persist until removed.
+ * @param source Pointer to the source to connect from
+ * @param sink Pointer to the sink to connect to
  *
- * @param conn Pointer to connection structure with source/sink set
- *
- * @return 0 on success, negative errno on error
+ * @return 0 on success
+ * @retval -EINVAL if source or sink is NULL
+ * @retval -EALREADY if source and sink are already connected
+ * @retval -ENOMEM if the connection pool is exhausted
  */
-int flow_connection_add(struct flow_connection *conn);
+int flow_runtime_connect(struct flow_source *source, struct flow_sink *sink);
 
 /**
- * @brief Disconnect a runtime connection
+ * @brief Disconnect a runtime connection between source and sink
  *
  * @note This function is only available when CONFIG_FLOW_RUNTIME_OBSERVERS is
  * enabled.
  *
- * This removes the connection between source and sink. The connection
- * structure can be freed or reused after this call returns.
+ * Removes the runtime connection between the specified source and sink,
+ * returning the connection slot to the internal pool.
  *
- * @param conn Pointer to the connection to remove
+ * @param source Pointer to the source to disconnect from
+ * @param sink Pointer to the sink to disconnect from
  *
- * @return 0 on success, negative errno on error
+ * @return 0 on success
+ * @retval -EINVAL if source or sink is NULL
+ * @retval -ENOENT if no connection exists between source and sink
  */
-int flow_connection_remove(struct flow_connection *conn);
+int flow_runtime_disconnect(struct flow_source *source, struct flow_sink *sink);
 #endif /* CONFIG_FLOW_RUNTIME_OBSERVERS */
 
 #ifdef CONFIG_FLOW_STATS
