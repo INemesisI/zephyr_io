@@ -95,14 +95,14 @@ ZTEST(weave_method_suite, test_method_call_direct_execution)
 	int ret;
 
 	/* Set method to module with no queue */
-	test_method_simple.module = &test_module_no_queue;
+	test_method_simple.queue = NULL;
 
 	/* Make method call - should execute directly */
 	ret = weave_call_method(&test_port_simple, &req, sizeof(req), &reply, sizeof(reply),
 				K_SECONDS(1));
 
 	/* Restore module */
-	test_method_simple.module = &test_module_a;
+	test_method_simple.queue = &test_msgq_a;
 
 	zassert_equal(ret, 0, "Direct execution failed: %d", ret);
 	zassert_equal(reply.result, 0x12345678, "Reply result mismatch");
@@ -115,12 +115,12 @@ static struct k_sem processor_started;
 
 static void controlled_processor_thread(void *p1, void *p2, void *p3)
 {
-	struct weave_module *module = (struct weave_module *)p1;
+	struct k_msgq *queue = (struct k_msgq *)p1;
 
 	k_sem_give(&processor_started);
 
 	while (processor_should_run) {
-		weave_process_all_messages(module);
+		weave_process_all_messages(queue);
 		k_sleep(K_MSEC(1));
 	}
 }
@@ -135,8 +135,9 @@ ZTEST(weave_method_suite, test_method_call_queued_execution)
 	int ret;
 
 	/* Ensure method has a queue */
-	test_method_simple.module = &test_module_a;
-	zassert_not_null(test_module_a.request_queue, "Module should have queue");
+	test_method_simple.queue = &test_msgq_a;
+	/* test_msgq_a is a message queue - verify method has queue */
+	zassert_not_null(test_method_simple.queue, "Method should have queue");
 
 	/* Initialize synchronization */
 	k_sem_init(&processor_started, 0, 1);
@@ -144,7 +145,7 @@ ZTEST(weave_method_suite, test_method_call_queued_execution)
 
 	/* Start a thread to process messages with controlled lifecycle */
 	tid = k_thread_create(&processor_thread, method_test_stack, TEST_THREAD_STACK,
-			      controlled_processor_thread, &test_module_a, NULL, NULL,
+			      controlled_processor_thread, &test_msgq_a, NULL, NULL,
 			      TEST_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 	/* Wait for processor to start */
@@ -204,29 +205,31 @@ ZTEST(weave_method_suite, test_method_call_null_port)
 	zassert_equal(ret, -EINVAL, "Should return -EINVAL for NULL port");
 }
 
-/* Test method with no parent module */
+/* Test method with no queue (immediate execution) */
 ZTEST(weave_method_suite, test_method_call_invalid_module)
 {
 	struct test_request req = {.value = 0x7777, .flags = 0};
 	struct test_reply reply = {0};
 	int ret;
 
-	/* Create method with no module */
-	struct weave_method orphan_method = {.name = "orphan",
-					     .handler = mock_method_handler_simple,
-					     .request_size = sizeof(struct test_request),
-					     .reply_size = sizeof(struct test_reply),
-					     .module = NULL};
-
-	struct weave_method_port orphan_port = {.name = "orphan_port",
-						.target_method = &orphan_method,
+	/* Create method with no queue - this is valid (immediate execution) */
+	struct weave_method immediate_method = {.name = "immediate",
+						.handler = mock_method_handler_simple,
 						.request_size = sizeof(struct test_request),
-						.reply_size = sizeof(struct test_reply)};
+						.reply_size = sizeof(struct test_reply),
+						.queue = NULL,
+						.user_data = &test_user_data_a};
 
-	ret = weave_call_method(&orphan_port, &req, sizeof(req), &reply, sizeof(reply),
+	struct weave_method_port immediate_port = {.name = "immediate_port",
+						   .target_method = &immediate_method,
+						   .request_size = sizeof(struct test_request),
+						   .reply_size = sizeof(struct test_reply)};
+
+	ret = weave_call_method(&immediate_port, &req, sizeof(req), &reply, sizeof(reply),
 				K_SECONDS(1));
 
-	zassert_equal(ret, -EINVAL, "Should return -EINVAL for method with no module");
+	zassert_equal(ret, 0, "Method with no queue should succeed (immediate execution)");
+	zassert_equal(reply.result, 0x12345678, "Reply should be processed");
 }
 
 /* Test request buffer too small */

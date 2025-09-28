@@ -17,15 +17,7 @@ struct monitor_stats {
 	int32_t last_alert_value;
 };
 
-/* Module exports */
-extern struct weave_module monitor_module;
-
-/* Method call ports (client-side) */
-extern struct weave_method_port monitor_call_read_sensor;
-extern struct weave_method_port monitor_call_set_config;
-extern struct weave_method_port monitor_call_get_stats;
-
-/* Signal handlers */
+/* Signal handler */
 extern struct weave_signal_handler monitor_on_threshold_exceeded;
 
 /* Get monitor statistics */

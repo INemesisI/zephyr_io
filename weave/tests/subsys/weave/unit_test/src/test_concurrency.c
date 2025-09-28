@@ -88,7 +88,7 @@ ZTEST(weave_concurrency_suite, test_concurrent_signal_emissions)
 
 	/* Setup signal handler */
 	sys_slist_init(&test_signal_basic.handlers);
-	test_handler_a.module = &test_module_no_queue; /* Direct execution */
+	test_handler_a.queue = NULL; /* Direct execution */
 	sys_slist_append(&test_signal_basic.handlers, &test_handler_a.node);
 
 	/* Reset counter */
@@ -147,14 +147,14 @@ static volatile bool race_processor_run = false;
 
 static void race_processor_thread(void *p1, void *p2, void *p3)
 {
-	struct weave_module *module = (struct weave_module *)p1;
+	struct k_msgq *queue = (struct k_msgq *)p1;
 
 	/* Delay slightly to create race condition */
 	k_sleep(K_MSEC(45));
 	k_sem_give(&race_processor_ready);
 
 	while (race_processor_run) {
-		weave_process_all_messages(module);
+		weave_process_all_messages(queue);
 		k_sleep(K_MSEC(1));
 	}
 }
@@ -174,8 +174,8 @@ ZTEST(weave_concurrency_suite, test_race_condition_completion)
 
 	/* Start processor that may complete just as timeout expires */
 	tid = k_thread_create(&processor_thread, test_stacks[0], TEST_THREAD_STACK,
-			      race_processor_thread, &test_module_a, NULL, NULL,
-			      TEST_THREAD_PRIORITY, 0, K_NO_WAIT);
+			      race_processor_thread, &test_msgq_a, NULL, NULL, TEST_THREAD_PRIORITY,
+			      0, K_NO_WAIT);
 
 	/* Use timeout that races with processor delay */
 	ret = weave_call_method(&test_port_simple, &req, sizeof(req), &reply, sizeof(reply),

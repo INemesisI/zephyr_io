@@ -62,14 +62,14 @@ static volatile bool forever_processor_run = false;
 
 static void delayed_processor_thread(void *p1, void *p2, void *p3)
 {
-	struct weave_module *module = (struct weave_module *)p1;
+	struct k_msgq *queue = (struct k_msgq *)p1;
 
 	/* Delay before starting to process */
 	k_sleep(K_MSEC(50));
 	k_sem_give(&forever_processor_ready);
 
 	while (forever_processor_run) {
-		weave_process_all_messages(module);
+		weave_process_all_messages(queue);
 		k_sleep(K_MSEC(1));
 	}
 }
@@ -89,7 +89,7 @@ ZTEST(weave_timeout_suite, test_method_timeout_forever)
 
 	/* Start processor thread with delay */
 	tid = k_thread_create(&processor_thread, timeout_test_stack_1, TEST_THREAD_STACK,
-			      delayed_processor_thread, &test_module_a, NULL, NULL,
+			      delayed_processor_thread, &test_msgq_a, NULL, NULL,
 			      TEST_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 	/* Call with K_FOREVER - should wait for processing */
@@ -141,7 +141,7 @@ ZTEST(weave_timeout_suite, test_completion_after_timeout)
 
 	/* Start delayed processor */
 	tid = k_thread_create(&processor_thread, timeout_test_stack_2, TEST_THREAD_STACK,
-			      (k_thread_entry_t)weave_process_all_messages, &test_module_a, NULL,
+			      (k_thread_entry_t)weave_process_all_messages, &test_msgq_a, NULL,
 			      NULL, TEST_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 	/* Call with short timeout */

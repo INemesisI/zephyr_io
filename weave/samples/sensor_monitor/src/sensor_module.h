@@ -52,10 +52,6 @@ struct threshold_exceeded_event {
 	uint32_t timestamp;
 };
 
-/* Module exports */
-extern struct weave_module sensor_module;
-extern struct k_msgq sensor_msgq;
-
 /* Methods provided by sensor module */
 extern struct weave_method sensor_read_sensor;
 extern struct weave_method sensor_set_config;

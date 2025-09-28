@@ -47,7 +47,7 @@ struct test_tracker {
 	struct test_reply last_reply;
 	struct test_event last_event;
 	struct k_sem completion;
-	struct weave_module *last_module;
+	void *last_user_data;
 };
 
 /* External test infrastructure */
@@ -56,11 +56,10 @@ extern struct test_tracker tracker_b;
 extern struct test_tracker tracker_c;
 extern struct test_tracker signal_tracker;
 
-/* Test modules */
-extern struct weave_module test_module_a;
-extern struct weave_module test_module_b;
-extern struct weave_module test_module_c;
-extern struct weave_module test_module_no_queue;
+/* Test message queues (used directly now, no modules) */
+extern struct k_msgq test_msgq_a;
+extern struct k_msgq test_msgq_b;
+extern struct k_msgq test_msgq_c;
 
 /* Test methods */
 extern struct weave_method test_method_simple;
@@ -84,12 +83,12 @@ extern struct weave_signal test_signal_empty;
 extern struct weave_signal_handler test_handler_a;
 extern struct weave_signal_handler test_handler_b;
 extern struct weave_signal_handler test_handler_c;
-extern struct weave_signal_handler test_handler_no_module;
+extern struct weave_signal_handler test_handler_no_queue;
 
-/* Message queues */
-extern struct k_msgq test_msgq_a;
-extern struct k_msgq test_msgq_b;
-extern struct k_msgq test_msgq_c;
+/* Test user data for handlers */
+extern int test_user_data_a;
+extern int test_user_data_b;
+extern int test_user_data_c;
 
 /* Helper functions */
 void reset_test_environment(void);

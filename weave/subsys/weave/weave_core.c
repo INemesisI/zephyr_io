@@ -28,8 +28,8 @@ static void weave_free_context(struct weave_message_context *ctx)
 		return;
 	}
 
-	if (ctx->allocated_request_data) {
-		k_heap_free(&weave_data_heap, ctx->allocated_request_data);
+	if (ctx->allocated_data) {
+		k_heap_free(&weave_data_heap, ctx->allocated_data);
 	}
 	if (ctx->allocated_reply_data) {
 		k_heap_free(&weave_data_heap, ctx->allocated_reply_data);
@@ -61,7 +61,7 @@ static bool weave_context_put(struct weave_message_context *ctx)
 /**
  * @brief Create and initialize a message context
  *
- * @param msg_type Message type (WEAVE_MSG_REQUEST or WEAVE_MSG_SIGNAL)
+ * @param msg_type Message type
  * @param refcount Initial reference count
  * @return Allocated context or NULL on failure
  */
@@ -91,30 +91,29 @@ static struct weave_message_context *weave_create_message_context(enum weave_msg
 }
 
 /**
- * @brief Setup request data for a message
+ * @brief Setup data buffer for a message
  *
  * @param ctx Message context
  * @param data Source data to copy
  * @param size Size of data
  * @return 0 on success, -ENOMEM on failure
  */
-static int weave_setup_request_buffer(struct weave_message_context *ctx, const void *data,
-				      size_t size)
+static int weave_setup_data_buffer(struct weave_message_context *ctx, const void *data, size_t size)
 {
 	if (!ctx) {
 		return -EINVAL;
 	}
 
 	if (data && size > 0) {
-		ctx->allocated_request_data = k_heap_alloc(&weave_data_heap, size, K_NO_WAIT);
-		if (!ctx->allocated_request_data) {
-			LOG_WRN("Data heap exhausted for request (%zu bytes)", size);
+		ctx->allocated_data = k_heap_alloc(&weave_data_heap, size, K_NO_WAIT);
+		if (!ctx->allocated_data) {
+			LOG_WRN("Data heap exhausted (%zu bytes)", size);
 			return -ENOMEM;
 		}
-		memcpy(ctx->allocated_request_data, data, size);
-		ctx->message.request_data = ctx->allocated_request_data;
+		memcpy(ctx->allocated_data, data, size);
+		ctx->message.data = ctx->allocated_data;
 	}
-	ctx->message.request_size = size;
+	ctx->message.data_size = size;
 	return 0;
 }
 
@@ -144,7 +143,51 @@ static int weave_setup_reply_buffer(struct weave_message_context *ctx, size_t si
 }
 
 /**
- * @brief Queue a message to a target module
+ * @brief Execute a method immediately in the caller's context
+ *
+ * @param method Method to execute
+ * @param request Request data
+ * @param request_size Size of request
+ * @param reply Reply buffer
+ * @param reply_size Size of reply buffer
+ * @return Result from method handler
+ */
+static int weave_execute_method_immediate(struct weave_method *method, const void *request,
+					  size_t request_size, void *reply, size_t reply_size)
+{
+	if (!method) {
+		return -EINVAL;
+	}
+
+	if (!method->handler) {
+		LOG_ERR("Method has no handler");
+		return -ENOTSUP;
+	}
+
+	/* Validate parameters */
+	if (request_size > 0 && !request) {
+		LOG_ERR("NULL request with non-zero size");
+		return -EINVAL;
+	}
+
+	/* Validate sizes */
+	if (request_size < method->request_size) {
+		LOG_ERR("Request too small: got %zu, need %zu", request_size, method->request_size);
+		return -EINVAL;
+	}
+
+	if (reply && reply_size < method->reply_size) {
+		LOG_ERR("Reply buffer too small: got %zu, need %zu", reply_size,
+			method->reply_size);
+		return -EINVAL;
+	}
+
+	/* Call handler directly */
+	return method->handler(method->user_data, request, reply);
+}
+
+/**
+ * @brief Queue a message to a message queue
  *
  * @param ctx Message context (will be freed on failure)
  * @param queue Target message queue
@@ -172,45 +215,60 @@ static int weave_queue_message(struct weave_message_context *ctx, struct k_msgq 
 }
 
 /**
- * @brief Common helper for queueing async messages (methods and signals)
+ * @brief Queue a method call for deferred execution
  *
- * @param msg_type Type of message (WEAVE_MSG_REQUEST or WEAVE_MSG_SIGNAL)
- * @param handler Method or signal handler to invoke
- * @param queue Target message queue
- * @param data Request/event data
- * @param data_size Size of request/event data
- * @param reply Reply buffer (NULL for signals)
- * @param reply_size Reply buffer size (0 for signals)
- * @param timeout Queue timeout (also used for completion wait on methods)
- * @return 0 on success, negative errno on error, or result from method call
+ * @param method Method to call
+ * @param request Request data
+ * @param request_size Size of request
+ * @param reply Reply buffer
+ * @param reply_size Size of reply buffer
+ * @param timeout Timeout for queueing and completion
+ * @return Result from method or error
  */
-static int weave_queue_async_message(enum weave_msg_type msg_type, void *handler,
-				     struct k_msgq *queue, const void *data, size_t data_size,
-				     void *reply, size_t reply_size, k_timeout_t timeout)
+static int weave_execute_method_queued(struct weave_method *method, const void *request,
+				       size_t request_size, void *reply, size_t reply_size,
+				       k_timeout_t timeout)
 {
 	struct weave_message_context *ctx;
 	int ret;
 
-	/* Initial refcount is always 1 - we'll increment later for requests */
-	int initial_refcount = 1;
+	if (!method || !method->queue) {
+		return -EINVAL;
+	}
 
-	/* Create message context */
-	ctx = weave_create_message_context(msg_type, initial_refcount);
+	/* Validate parameters */
+	if (request_size > 0 && !request) {
+		LOG_ERR("NULL request with non-zero size");
+		return -EINVAL;
+	}
+
+	/* Validate sizes upfront */
+	if (request_size < method->request_size) {
+		LOG_ERR("Request too small: got %zu, need %zu", request_size, method->request_size);
+		return -EINVAL;
+	}
+
+	if (reply && reply_size < method->reply_size) {
+		LOG_ERR("Reply buffer too small: got %zu, need %zu", reply_size,
+			method->reply_size);
+		return -EINVAL;
+	}
+
+	/* Create message context with refcount 2 (sender + receiver) */
+	ctx = weave_create_message_context(WEAVE_MSG_REQUEST, 2);
 	if (!ctx) {
-		LOG_WRN("Signal pool exhausted, dropping signal");
 		return -ENOMEM;
 	}
 
-	/* Setup request/event data */
-	ret = weave_setup_request_buffer(ctx, data, data_size);
+	/* Setup request data */
+	ret = weave_setup_data_buffer(ctx, request, request_size);
 	if (ret != 0) {
 		weave_free_context(ctx);
-		LOG_WRN("Failed to setup signal data");
 		return ret;
 	}
 
-	/* Setup reply buffer if needed (only for requests) */
-	if (reply && msg_type == WEAVE_MSG_REQUEST) {
+	/* Setup reply buffer */
+	if (reply) {
 		ret = weave_setup_reply_buffer(ctx, reply_size);
 		if (ret != 0) {
 			weave_free_context(ctx);
@@ -219,26 +277,17 @@ static int weave_queue_async_message(enum weave_msg_type msg_type, void *handler
 	}
 
 	/* Setup message fields */
-	ctx->message.method = (struct weave_method *)handler;
-	if (msg_type == WEAVE_MSG_REQUEST) {
-		ctx->message.completion = &ctx->completion;
-		ctx->message.result = &ctx->result;
-		/* Increment refcount for requests (sender keeps a reference) */
-		atomic_inc(&ctx->refcount);
-	}
+	ctx->message.target.method = method;
+	ctx->message.completion = &ctx->completion;
+	ctx->message.result = &ctx->result;
 
 	/* Queue the message */
-	ret = weave_queue_message(ctx, queue, timeout);
+	ret = weave_queue_message(ctx, method->queue, timeout);
 	if (ret != 0) {
 		return ret;
 	}
 
-	/* For signals, we're done - fire and forget */
-	if (msg_type == WEAVE_MSG_SIGNAL) {
-		return 0;
-	}
-
-	/* For methods, wait for completion */
+	/* Wait for completion */
 	ret = k_sem_take(&ctx->completion, timeout);
 	if (ret != 0) {
 		LOG_DBG("Request timed out");
@@ -261,13 +310,12 @@ static int weave_queue_async_message(enum weave_msg_type msg_type, void *handler
 }
 
 /**
- * @brief Call a method on another module
+ * @brief Call a method (public API)
  */
 int weave_call_method(struct weave_method_port *port, const void *request, size_t request_size,
 		      void *reply, size_t reply_size, k_timeout_t timeout)
 {
 	struct weave_method *method;
-	struct weave_module *target;
 
 	if (!port || !port->target_method) {
 		LOG_ERR("Invalid method port or unconnected port");
@@ -275,183 +323,185 @@ int weave_call_method(struct weave_method_port *port, const void *request, size_
 	}
 
 	method = port->target_method;
-	target = method->module;
-
-	/* Target module must exist for a valid method */
-	if (!target) {
-		LOG_ERR("Method has no parent module");
-		return -EINVAL;
-	}
 
 	/* Validate port sizes match method sizes */
 	if (port->request_size != method->request_size) {
-		LOG_ERR("Port request size mismatch: port expects %zu, method expects %zu",
-			port->request_size, method->request_size);
+		LOG_ERR("Port request size mismatch: port=%zu, method=%zu", port->request_size,
+			method->request_size);
 		return -EINVAL;
 	}
 
 	if (port->reply_size != method->reply_size) {
-		LOG_ERR("Port reply size mismatch: port expects %zu, method expects %zu",
-			port->reply_size, method->reply_size);
+		LOG_ERR("Port reply size mismatch: port=%zu, method=%zu", port->reply_size,
+			method->reply_size);
 		return -EINVAL;
 	}
 
-	/* Validate request size - must be at least as large as expected */
-	if (request_size < port->request_size) {
-		LOG_ERR("Request buffer too small: provided %zu, need at least %zu", request_size,
-			port->request_size);
-		return -EINVAL;
+	/* Execute immediately or queue based on method configuration */
+	if (weave_method_is_immediate(method)) {
+		return weave_execute_method_immediate(method, request, request_size, reply,
+						      reply_size);
+	} else {
+		return weave_execute_method_queued(method, request, request_size, reply, reply_size,
+						   timeout);
 	}
-
-	/* Validate reply size if reply buffer provided */
-	if (reply && reply_size < port->reply_size) {
-		LOG_ERR("Reply buffer too small: provided %zu, need at least %zu", reply_size,
-			port->reply_size);
-		return -EINVAL;
-	}
-
-	/* Validate NULL request only allowed if size is 0 */
-	if (!request && request_size > 0) {
-		LOG_ERR("NULL request with non-zero size %zu", request_size);
-		return -EINVAL;
-	}
-
-	/* Direct call if no message queue */
-	if (!target->request_queue) {
-		/* Direct execution in caller's context */
-		LOG_DBG("Direct call to method %s", method->name);
-		return method->handler(target, request, reply);
-	}
-
-	/* Async call through message queue */
-	return weave_queue_async_message(WEAVE_MSG_REQUEST, method, target->request_queue, request,
-					 port->request_size, reply, port->reply_size, timeout);
 }
 
 /**
- * @brief Emit a signal to all handlers
+ * @brief Execute a signal handler immediately
+ */
+static void weave_execute_signal_immediate(struct weave_signal_handler *handler, const void *event)
+{
+	if (handler && handler->handler) {
+		handler->handler(handler->user_data, event);
+	}
+}
+
+/**
+ * @brief Queue a signal to a handler's queue
+ */
+static int weave_queue_signal(struct weave_signal_handler *handler, const void *event,
+			      size_t event_size)
+{
+	struct weave_message_context *ctx;
+	int ret;
+
+	if (!handler || !handler->queue) {
+		return -EINVAL;
+	}
+
+	/* Create message context with refcount 1 (receiver only) */
+	ctx = weave_create_message_context(WEAVE_MSG_SIGNAL, 1);
+	if (!ctx) {
+		LOG_WRN("Signal pool exhausted");
+		return -ENOMEM;
+	}
+
+	/* Setup event data */
+	ret = weave_setup_data_buffer(ctx, event, event_size);
+	if (ret != 0) {
+		weave_free_context(ctx);
+		return ret;
+	}
+
+	/* Setup message fields */
+	ctx->message.target.handler = handler;
+
+	/* Queue the message with no wait (signals are fire-and-forget) */
+	ret = weave_queue_message(ctx, handler->queue, K_NO_WAIT);
+
+	return ret;
+}
+
+/**
+ * @brief Emit a signal to all connected handlers
  */
 int weave_emit_signal(struct weave_signal *signal, const void *event)
 {
-	int sent_count = 0;
+	struct weave_signal_handler *handler;
+	sys_snode_t *node;
+	int queued_count = 0;
+	int immediate_count = 0;
 
 	if (!signal) {
 		return -EINVAL;
 	}
 
-	LOG_DBG("Emitting signal %s", signal->name);
+	/* Iterate through all connected handlers */
+	SYS_SLIST_FOR_EACH_NODE(&signal->handlers, node) {
+		handler = CONTAINER_OF(node, struct weave_signal_handler, node);
 
-	/* Send to all handlers in the linked list */
-	struct weave_signal_handler *handler;
-	SYS_SLIST_FOR_EACH_CONTAINER(&signal->handlers, handler, node) {
-		struct weave_module *target = handler->module;
-
-		if (!target) {
-			LOG_WRN("Signal handler has no parent module");
-			continue;
-		}
-
-		/* Direct execution if no message queue */
-		if (!target->request_queue) {
-			handler->handler(target, event);
-			sent_count++;
-			continue;
-		}
-
-		/* Queue signal for async processing */
-		int ret =
-			weave_queue_async_message(WEAVE_MSG_SIGNAL, handler, target->request_queue,
-						  event, signal->event_size, NULL, 0, K_NO_WAIT);
-		if (ret == 0) {
-			sent_count++;
+		if (handler->queue) {
+			/* Queued execution */
+			if (weave_queue_signal(handler, event, signal->event_size) == 0) {
+				queued_count++;
+			}
+		} else {
+			/* Immediate execution */
+			weave_execute_signal_immediate(handler, event);
+			immediate_count++;
 		}
 	}
 
-	LOG_DBG("Signal sent to %d handlers", sent_count);
+	LOG_DBG("Signal emitted: %d immediate, %d queued", immediate_count, queued_count);
 	return 0;
 }
 
 /**
- * @brief Process a message received by a module
+ * @brief Process a single message from a queue
  */
-void weave_process_message(struct weave_module *module, struct weave_message *msg)
+int weave_process_message(struct k_msgq *queue, k_timeout_t timeout)
 {
-	if (!module || !msg) {
-		return;
+	struct weave_message *msg;
+	struct weave_message_context *ctx;
+	int ret;
+
+	if (!queue) {
+		return -EINVAL;
 	}
 
-	LOG_DBG("Module %s processing %s message", module->name,
-		msg->type == WEAVE_MSG_REQUEST ? "request" : "signal");
+	/* Get message pointer from queue */
+	ret = k_msgq_get(queue, &msg, timeout);
+	if (ret != 0) {
+		return ret == -EAGAIN ? -EAGAIN : ret;
+	}
 
+	/* Get the containing context */
+	ctx = CONTAINER_OF(msg, struct weave_message_context, message);
+
+	/* Process based on message type */
 	switch (msg->type) {
 	case WEAVE_MSG_REQUEST: {
-		/* Get the context for cleanup */
-		struct weave_message_context *ctx =
-			(struct weave_message_context *)((char *)msg -
-							 offsetof(struct weave_message_context,
-								  message));
-
-		/* Execute method directly */
-		int result = -ENOTSUP;
-
-		if (msg->method && msg->method->handler) {
-			result = msg->method->handler(module, msg->request_data, msg->reply_data);
+		struct weave_method *method = msg->target.method;
+		if (method && method->handler) {
+			/* Execute the method */
+			*msg->result =
+				method->handler(method->user_data, msg->data, msg->reply_data);
+		} else if (method && !method->handler) {
+			/* Method exists but has no handler */
+			*msg->result = -ENOTSUP;
 		} else {
-			LOG_WRN("No handler for method");
+			/* No method at all */
+			*msg->result = -EINVAL;
 		}
-
-		/* Handle synchronous completion for requests */
-		if (msg->type == WEAVE_MSG_REQUEST && msg->completion) {
-			/* Write result first, before any synchronization */
-			if (msg->result) {
-				*msg->result = result;
-			}
-
-			/* Signal the caller if they're still waiting */
-			k_sem_give(msg->completion);
-		}
-
-		/* Release receiver's reference */
-		weave_context_put(ctx);
-	} break;
-
-	case WEAVE_MSG_SIGNAL: {
-		/* Process signal - handler stored in method field */
-		struct weave_signal_handler *handler = (struct weave_signal_handler *)msg->method;
-
-		if (handler && handler->handler) {
-			handler->handler(module, msg->request_data);
-		}
-
-		/* Release the signal's reference */
-		struct weave_message_context *ctx =
-			(struct weave_message_context *)((char *)msg -
-							 offsetof(struct weave_message_context,
-								  message));
-		weave_context_put(ctx);
-	} break;
-
-	default:
-		LOG_WRN("Unknown message type %d", msg->type);
+		/* Signal completion */
+		k_sem_give(msg->completion);
 		break;
 	}
+
+	case WEAVE_MSG_SIGNAL: {
+		struct weave_signal_handler *handler = msg->target.handler;
+		if (handler && handler->handler) {
+			/* Execute the signal handler */
+			handler->handler(handler->user_data, msg->data);
+		}
+		break;
+	}
+
+	default:
+		LOG_ERR("Unknown message type: %d", msg->type);
+		break;
+	}
+
+	/* Release the receiver's reference */
+	weave_context_put(ctx);
+	return 0;
 }
 
 /**
- * @brief Process all pending messages in a module's queue
+ * @brief Process all pending messages in a queue
  */
-int weave_process_all_messages(struct weave_module *module)
+int weave_process_all_messages(struct k_msgq *queue)
 {
-	struct weave_message *msg;
 	int count = 0;
+	int ret;
 
-	if (!module || !module->request_queue) {
+	if (!queue) {
 		return 0;
 	}
 
-	/* Process all pending messages */
-	while (k_msgq_get(module->request_queue, &msg, K_NO_WAIT) == 0) {
-		weave_process_message(module, msg);
+	/* Process all available messages */
+	while ((ret = weave_process_message(queue, K_NO_WAIT)) == 0) {
 		count++;
 	}
 
@@ -459,70 +509,33 @@ int weave_process_all_messages(struct weave_module *module)
 }
 
 /**
- * @brief Wire all connections
- */
-static int weave_wire_connections(void)
-{
-	/* Wire method connections */
-	TYPE_SECTION_FOREACH(struct weave_method_connection, weave_method_connection, conn) {
-		if (conn->port && conn->method) {
-			/* Validate size matching */
-			if (conn->port->request_size != conn->method->request_size) {
-				LOG_ERR("Request size mismatch: port %s (%zu) != method %s (%zu)",
-					conn->port->name, conn->port->request_size,
-					conn->method->name, conn->method->request_size);
-				return -EINVAL;
-			}
-			if (conn->port->reply_size != conn->method->reply_size) {
-				LOG_ERR("Reply size mismatch: port %s (%zu) != method %s (%zu)",
-					conn->port->name, conn->port->reply_size,
-					conn->method->name, conn->method->reply_size);
-				return -EINVAL;
-			}
-
-			conn->port->target_method = conn->method;
-			LOG_INF("Wired method port %s to method %s", conn->port->name,
-				conn->method->name);
-		}
-	}
-
-	/* Build handler lists for signals */
-	TYPE_SECTION_FOREACH(struct weave_signal_connection, weave_signal_connection, conn) {
-		if (conn->signal && conn->handler) {
-			/* Add handler to signal's linked list */
-			sys_slist_append(&conn->signal->handlers, &conn->handler->node);
-			LOG_INF("Connected signal %s to handler %s", conn->signal->name,
-				conn->handler->name);
-		}
-	}
-
-	return 0;
-}
-
-/**
- * @brief Initialize the Weave framework
+ * @brief Initialize the weave subsystem
  */
 int weave_init(void)
 {
-	int ret;
-
-	LOG_INF("Weave framework initializing");
-
-	/* Log registered modules */
-	TYPE_SECTION_FOREACH(struct weave_module *, weave_modules, module_ptr) {
-		struct weave_module *module = *module_ptr;
-		LOG_INF("Registered module: %s", module->name);
+	/* Wire method connections */
+	STRUCT_SECTION_FOREACH(weave_method_connection, conn) {
+		if (conn->port && conn->method) {
+			conn->port->target_method = conn->method;
+			LOG_DBG("Connected method port %s to method %s",
+				conn->port->name ? conn->port->name : "(unnamed)",
+				conn->method->name ? conn->method->name : "(unnamed)");
+		}
 	}
 
-	/* Wire all connections */
-	ret = weave_wire_connections();
-	if (ret != 0) {
-		LOG_ERR("Failed to wire connections: %d", ret);
-		return ret;
+	/* Wire signal connections */
+	STRUCT_SECTION_FOREACH(weave_signal_connection, conn) {
+		if (conn->signal && conn->handler) {
+			sys_slist_append(&conn->signal->handlers, &conn->handler->node);
+			LOG_DBG("Connected signal %s to handler %s",
+				conn->signal->name ? conn->signal->name : "(unnamed)",
+				conn->handler->name ? conn->handler->name : "(unnamed)");
+		}
 	}
 
-	LOG_INF("Weave framework initialized");
+	LOG_INF("Weave initialized");
 	return 0;
 }
 
-SYS_INIT(weave_init, APPLICATION, CONFIG_WEAVE_INIT_PRIORITY);
+/* Initialize during POST_KERNEL phase */
+SYS_INIT(weave_init, POST_KERNEL, CONFIG_WEAVE_INIT_PRIORITY);

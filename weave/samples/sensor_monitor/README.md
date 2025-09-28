@@ -4,48 +4,83 @@ Demonstrates Weave's message passing framework through a sensor monitoring syste
 
 ## Overview
 
-Two modules demonstrate the complete Weave communication patterns:
+Three components work together to demonstrate Weave communication:
 - **Sensor** - Provides methods for reading data and configuration
-- **Monitor** - Calls sensor methods and handles threshold signals
+- **Monitor** - Handles threshold signals and tracks statistics
+- **Main** - Defines method ports, wires connections, and orchestrates tests
 
 ```
-Module Communication Architecture:
+Component Communication Architecture:
 
 ┌─────────────┐                      ┌─────────────┐
-│   MONITOR   │  ──METHOD CALLS───→  │   SENSOR    │
+│   MONITOR   │                      │   SENSOR    │
 │             │                      │             │
-│  - Queries  │  read_sensor         │  - Provides │
-│    sensor   │  set_config          │    data     │
-│    data     │  get_stats           │             │
+│  - Handles  │  ←──SIGNAL──────────│  - Provides │
+│    alerts   │  threshold_exceeded  │    methods  │
 │             │                      │  - Auto-    │
-│  - Handles  │  ←──SIGNAL──────────│    samples  │
-│    alerts   │  threshold_exceeded  │             │
+│  - Tracks   │                      │    samples  │
+│    stats    │                      │             │
 └─────────────┘                      └─────────────┘
+        ↑                                    ↑
+        └──────────── MAIN ─────────────────┘
+              (Defines method ports,
+               wires connections, and
+               orchestrates test calls)
 
-Communication Patterns:
-• Method Calls: Monitor → Sensor (request/reply)
-• Signals: Sensor → Monitor (broadcast events)
+Communication Flow:
+• Method Calls: Main → Sensor (using method ports)
+• Signals: Sensor → Monitor (threshold events)
+• Wiring: Main connects everything at startup
 ```
 
-## How It Works
+## What This Sample Shows
 
-### Method Calls (RPC-Style)
-1. Monitor defines method ports: `WEAVE_METHOD_PORT_DEFINE()`
-2. Sensor registers methods: `WEAVE_METHOD_REGISTER()`
-3. Main wires connections: `WEAVE_METHOD_CONNECT()`
-4. Monitor makes synchronous calls with timeouts
+- **Method calls with timeouts** - Main orchestrates sensor queries via method ports
+- **Signal broadcasting** - Sensor emits threshold alerts to monitor
+- **Mixed execution modes** - Methods use queued execution, signals use immediate
+- **Separation of concerns** - Main owns the wiring and test logic
 
-### Signal Broadcasting
-1. Sensor defines signals: `WEAVE_SIGNAL_DEFINE()`
-2. Monitor registers handlers: `WEAVE_SIGNAL_HANDLER_REGISTER()`
-3. Main wires connections: `WEAVE_SIGNAL_CONNECT()`
-4. Sensor emits events when thresholds exceeded
+## Component Responsibilities
 
-### Key Features
-- **Thread Integration**: Sensor runs in its own thread with message queue
-- **Type Safety**: All connections type-checked at compile time
-- **Timeout Handling**: Every method call has explicit timeout
-- **Module Isolation**: Clean separation between modules
+### Main (main.c)
+- Defines method ports for calling sensor methods
+- Wires method ports and signals
+- Runs test scenarios and displays results
+
+### Sensor (sensor_module.c)
+- Implements methods (read_sensor, set_config, get_stats)
+- Runs auto-sampling in a background thread
+- Emits threshold_exceeded signals
+- Processes queued method calls
+
+### Monitor (monitor_module.c)
+- Handles threshold_exceeded signals
+- Tracks alert statistics
+- Provides immediate signal processing (no queue)
+
+## Test Scenarios
+
+The sample runs through four test scenarios:
+
+### Test 1: Configure sensor with low threshold
+- Sets threshold to 70 (down from default 100)
+- Demonstrates configuration method call
+- Shows old and new threshold values
+
+### Test 2: Manual sensor reads
+- Performs 5 manual sensor reads on different channels
+- Demonstrates read_sensor method calls
+- Shows individual channel values
+
+### Test 3: Increase threshold
+- Sets threshold to 150 (high value)
+- Stops triggering alerts
+- Demonstrates dynamic configuration
+
+### Test 4: Get statistics
+- Retrieves and displays sensor statistics (reads, events, value range)
+- Retrieves and displays monitor statistics (alerts received, last value)
+- Shows accumulated operational data
 
 ## Building and Running
 
@@ -61,7 +96,7 @@ west build -b native_sim weave/samples/sensor_monitor
 
 ```
 [00:00:00.000] <inf> app: ==============================================
-[00:00:00.000] <inf> app: Weave Thread Integration Sample
+[00:00:00.000] <inf> app: Weave Sensor Monitor Sample
 [00:00:00.000] <inf> app: ==============================================
 
 [00:00:00.100] <inf> app: Test 1: Configure sensor with low threshold
@@ -69,7 +104,7 @@ west build -b native_sim weave/samples/sensor_monitor
 [00:00:00.100] <inf> app: Config changed: old threshold=100, new=70
 
 [00:00:00.600] <inf> sensor: Auto-sample: value=85 > threshold=70
-[00:00:00.600] <wrn> monitor: ALERT: Sensor exceeded threshold! Value=85, Threshold=70
+[00:00:00.600] <wrn> monitor: ALERT: Threshold exceeded! Value=85, Threshold=70
 
 [00:00:03.100] <inf> app: Test 2: Manual sensor reads
 [00:00:03.100] <inf> sensor: Manual read channel 0: value=45
@@ -90,83 +125,21 @@ west build -b native_sim weave/samples/sensor_monitor
 [00:00:11.100] <inf> app:   Last alert value: 85
 ```
 
-## Module Implementation
+## Sample Structure
 
-### Sensor Module
-```c
-// Provides three methods
-WEAVE_METHOD_REGISTER(sensor_read_sensor, ...);
-WEAVE_METHOD_REGISTER(sensor_set_config, ...);
-WEAVE_METHOD_REGISTER(sensor_get_stats, ...);
-
-// Emits threshold signal
-WEAVE_SIGNAL_DEFINE(threshold_exceeded, ...);
-
-// Runs in dedicated thread with message queue
-K_THREAD_DEFINE(sensor_tid, ..., sensor_thread, ...);
 ```
-
-### Monitor Module
-```c
-// Method call ports for sensor communication
-WEAVE_METHOD_PORT_DEFINE(monitor_call_read_sensor, ...);
-WEAVE_METHOD_PORT_DEFINE(monitor_call_set_config, ...);
-WEAVE_METHOD_PORT_DEFINE(monitor_call_get_stats, ...);
-
-// Signal handler for threshold events
-WEAVE_SIGNAL_HANDLER_REGISTER(monitor_on_threshold_exceeded, ...);
-
-// No thread - runs in main context
-```
-
-## Extending the Sample
-
-### Adding a New Method
-```c
-// In sensor_module.h - define request/reply structures
-struct calibrate_request {
-    uint32_t offset;
-};
-struct calibrate_reply {
-    bool success;
-};
-
-// In sensor_module.c - implement and register
-int handle_calibrate(void *module, const void *req, void *rep) {
-    // Implementation
-}
-WEAVE_METHOD_REGISTER(sensor_calibrate, handle_calibrate,
-    struct calibrate_request, struct calibrate_reply);
-
-// In monitor_module.c - define port
-WEAVE_METHOD_PORT_DEFINE(monitor_call_calibrate,
-    struct calibrate_request, struct calibrate_reply);
-
-// In main.c - wire connection
-WEAVE_METHOD_CONNECT(monitor_call_calibrate, sensor_calibrate);
-```
-
-### Adding a New Signal
-```c
-// In sensor_module.c - define and emit
-WEAVE_SIGNAL_DEFINE(sensor_error, struct error_event);
-
-// Emit when error occurs
-struct error_event evt = {.code = ERROR_TIMEOUT};
-weave_emit_signal(&sensor_error, &evt);
-
-// In monitor_module.c - handle signal
-void handle_error(void *module, const void *event) {
-    // Handle error
-}
-WEAVE_SIGNAL_HANDLER_REGISTER(monitor_on_error, handle_error,
-    struct error_event);
-
-// In main.c - wire connection
-WEAVE_SIGNAL_CONNECT(sensor_error, monitor_on_error);
+sensor_monitor/
+├── src/
+│   ├── main.c              # Method ports, wiring, and test orchestration
+│   ├── sensor_module.c      # Sensor methods and signal emission
+│   ├── sensor_module.h      # Message structures and sensor API
+│   ├── monitor_module.c     # Signal handler and statistics
+│   └── monitor_module.h     # Monitor API
+├── prj.conf                 # Configuration
+├── sample.yaml              # Twister test definition
+└── README.md
 ```
 
 ## Further Reading
 
-- [Weave API Documentation](../../include/zephyr_io/weave/weave.h) - Complete API reference
-- [Main Weave README](../../README.md) - Overview of the Weave framework
+- [Main Weave README](../../README.md) - Overview and API documentation

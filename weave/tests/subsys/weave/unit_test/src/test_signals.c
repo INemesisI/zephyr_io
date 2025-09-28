@@ -41,7 +41,7 @@ ZTEST(weave_signal_suite, test_signal_emit_basic)
 
 	/* WARNING: Direct manipulation for testing only */
 	/* Use module without queue for immediate execution, or process the queue */
-	test_handler_a.module = &test_module_no_queue; /* Direct execution */
+	test_handler_a.queue = NULL; /* Direct execution */
 	sys_slist_append(&test_signal_basic.handlers, &test_handler_a.node);
 
 	/* Emit signal */
@@ -55,7 +55,7 @@ ZTEST(weave_signal_suite, test_signal_emit_basic)
 	zassert_equal(atomic_get(&signal_tracker.call_count), 1, "Handler not called");
 	zassert_equal(signal_tracker.last_event.event_id, 0x1001, "Event ID mismatch");
 	zassert_equal(signal_tracker.last_event.data, 0xCAFE, "Event data mismatch");
-	zassert_equal_ptr(signal_tracker.last_module, &test_module_no_queue, "Module mismatch");
+	zassert_equal_ptr(signal_tracker.last_user_data, &test_user_data_a, "User data mismatch");
 }
 
 /* Test signal to multiple subscribers */
@@ -67,9 +67,9 @@ ZTEST(weave_signal_suite, test_signal_emit_multiple_handlers)
 	signal_test_setup();
 
 	/* WARNING: Direct manipulation for testing only */
-	test_handler_a.module = &test_module_a;
-	test_handler_b.module = &test_module_b;
-	test_handler_c.module = &test_module_c;
+	test_handler_a.queue = &test_msgq_a;
+	test_handler_b.queue = &test_msgq_b;
+	test_handler_c.queue = &test_msgq_c;
 
 	sys_slist_append(&test_signal_multi.handlers, &test_handler_a.node);
 	sys_slist_append(&test_signal_multi.handlers, &test_handler_b.node);
@@ -117,7 +117,7 @@ ZTEST(weave_signal_suite, test_signal_emit_direct)
 	signal_test_setup();
 
 	/* Connect handler to module with no queue */
-	test_handler_a.module = &test_module_no_queue;
+	test_handler_a.queue = NULL;
 	sys_slist_append(&test_signal_basic.handlers, &test_handler_a.node);
 
 	/* Emit signal - should execute directly */
@@ -138,7 +138,7 @@ ZTEST(weave_signal_suite, test_signal_emit_queued)
 	signal_test_setup();
 
 	/* Connect handler to module with queue */
-	test_handler_a.module = &test_module_a;
+	test_handler_a.queue = &test_msgq_a;
 	sys_slist_append(&test_signal_basic.handlers, &test_handler_a.node);
 
 	/* Emit signal */
@@ -171,7 +171,7 @@ ZTEST(weave_signal_suite, test_signal_emit_null_event)
 	signal_test_setup();
 
 	/* Connect handler */
-	test_handler_a.module = &test_module_a;
+	test_handler_a.queue = &test_msgq_a;
 	sys_slist_append(&test_signal_basic.handlers, &test_handler_a.node);
 
 	/* Emit with NULL event - should still work */
@@ -188,16 +188,18 @@ ZTEST(weave_signal_suite, test_signal_handler_null_module)
 	signal_test_setup();
 
 	/* Connect handler with no module */
-	test_handler_no_module.module = NULL;
-	sys_slist_append(&test_signal_basic.handlers, &test_handler_no_module.node);
+	test_handler_no_queue.queue = NULL;
+	sys_slist_append(&test_signal_basic.handlers, &test_handler_no_queue.node);
 
-	/* Emit signal - should skip handler with no module */
+	/* Emit signal - handler with NULL queue executes immediately */
 	ret = weave_emit_signal(&test_signal_basic, &event);
 	zassert_equal(ret, 0, "Signal emission should succeed");
 
-	/* Handler should not be called */
-	zassert_equal(atomic_get(&signal_tracker.call_count), 0,
-		      "Handler with no module should not be called");
+	/* Handler should be called immediately */
+	zassert_equal(atomic_get(&signal_tracker.call_count), 1,
+		      "Handler with no queue should execute immediately");
+	zassert_equal(signal_tracker.last_event.event_id, 0x7007, "Event ID mismatch");
+	zassert_equal(signal_tracker.last_event.data, 0x5678, "Event data mismatch");
 }
 
 /* Test signal emission from ISR context (K_NO_WAIT) */
@@ -209,7 +211,7 @@ ZTEST(weave_signal_suite, test_signal_emit_from_isr)
 	signal_test_setup();
 
 	/* Connect handler to module with queue */
-	test_handler_a.module = &test_module_a;
+	test_handler_a.queue = &test_msgq_a;
 	sys_slist_append(&test_signal_basic.handlers, &test_handler_a.node);
 
 	/* Fill the queue to test K_NO_WAIT behavior */
@@ -232,11 +234,11 @@ static struct k_sem mixed_processor_done;
 
 static void mixed_processor_thread(void *p1, void *p2, void *p3)
 {
-	struct weave_module *module = (struct weave_module *)p1;
+	struct k_msgq *queue = (struct k_msgq *)p1;
 	int processed = 0;
 
 	while (mixed_processor_run && processed < 10) {
-		processed += weave_process_all_messages(module);
+		processed += weave_process_all_messages(queue);
 		k_sleep(K_MSEC(1));
 	}
 
@@ -254,8 +256,8 @@ ZTEST(weave_signal_suite, test_signal_mixed_handlers)
 	signal_test_setup();
 
 	/* WARNING: Direct manipulation for testing only */
-	test_handler_a.module = &test_module_no_queue; /* Direct */
-	test_handler_b.module = &test_module_a;        /* Queued */
+	test_handler_a.queue = NULL;         /* Direct */
+	test_handler_b.queue = &test_msgq_a; /* Queued */
 
 	sys_slist_append(&test_signal_multi.handlers, &test_handler_a.node);
 	sys_slist_append(&test_signal_multi.handlers, &test_handler_b.node);
@@ -266,7 +268,7 @@ ZTEST(weave_signal_suite, test_signal_mixed_handlers)
 
 	/* Start processor thread with controlled lifecycle */
 	tid = k_thread_create(&processor_thread, signal_test_stack_2, TEST_THREAD_STACK,
-			      mixed_processor_thread, &test_module_a, NULL, NULL,
+			      mixed_processor_thread, &test_msgq_a, NULL, NULL,
 			      TEST_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 	/* Emit signal */

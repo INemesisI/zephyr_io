@@ -16,6 +16,19 @@
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
 /* ========================================================================
+ * Method Ports - Define client-side endpoints for calling methods
+ * ======================================================================== */
+
+/* Define method call ports for calling sensor methods */
+WEAVE_METHOD_PORT_DEFINE(monitor_call_read_sensor, struct read_sensor_request,
+			 struct read_sensor_reply);
+
+WEAVE_METHOD_PORT_DEFINE(monitor_call_set_config, struct set_config_request,
+			 struct set_config_reply);
+
+WEAVE_METHOD_PORT_DEFINE(monitor_call_get_stats, struct get_stats_request, struct get_stats_reply);
+
+/* ========================================================================
  * Wiring - Connect modules at compile time
  * Direct method-to-method connections with module-prefixed names
  * ======================================================================== */

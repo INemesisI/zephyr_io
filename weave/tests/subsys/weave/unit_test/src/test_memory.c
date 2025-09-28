@@ -21,10 +21,10 @@ ZTEST(weave_memory_suite, test_slab_allocation_success)
 	int ret;
 
 	/* Make a simple method call to test allocation works */
-	test_method_simple.module = &test_module_no_queue;
+	test_method_simple.queue = NULL;
 	ret = weave_call_method(&test_port_simple, &req, sizeof(req), &reply, sizeof(reply),
 				K_NO_WAIT);
-	test_method_simple.module = &test_module_a;
+	test_method_simple.queue = &test_msgq_a;
 
 	zassert_equal(ret, 0, "Method call should succeed when memory available");
 }
@@ -62,10 +62,10 @@ ZTEST(weave_memory_suite, test_heap_allocation_success)
 	int ret;
 
 	/* Make method call which internally allocates from heap */
-	test_method_simple.module = &test_module_no_queue;
+	test_method_simple.queue = NULL;
 	ret = weave_call_method(&test_port_simple, &req, sizeof(req), &reply, sizeof(reply),
 				K_NO_WAIT);
-	test_method_simple.module = &test_module_a;
+	test_method_simple.queue = &test_msgq_a;
 
 	zassert_equal(ret, 0, "Method with data buffers should succeed");
 }
@@ -85,10 +85,10 @@ ZTEST(weave_memory_suite, test_heap_exhaustion_request)
 		reqs[i].value = 0x5000 + i;
 		reqs[i].flags = i;
 
-		test_method_simple.module = &test_module_no_queue;
+		test_method_simple.queue = NULL;
 		ret = weave_call_method(&test_port_simple, &reqs[i], sizeof(reqs[i]), &replies[i],
 					sizeof(replies[i]), K_NO_WAIT);
-		test_method_simple.module = &test_module_a;
+		test_method_simple.queue = &test_msgq_a;
 
 		if (ret == 0) {
 			succeeded++;
@@ -141,8 +141,8 @@ ZTEST(weave_memory_suite, test_context_refcount_multiple)
 
 	/* Setup multiple handlers */
 	sys_slist_init(&test_signal_multi.handlers);
-	test_handler_a.module = &test_module_a;
-	test_handler_b.module = &test_module_b;
+	test_handler_a.queue = &test_msgq_a;
+	test_handler_b.queue = &test_msgq_b;
 	sys_slist_append(&test_signal_multi.handlers, &test_handler_a.node);
 	sys_slist_append(&test_signal_multi.handlers, &test_handler_b.node);
 
@@ -222,7 +222,7 @@ ZTEST(weave_memory_suite, test_large_message_handling)
 		.handler = mock_large_handler, /* Use handler that expects large buffers */
 		.request_size = sizeof(struct large_request),
 		.reply_size = sizeof(struct large_reply),
-		.module = &test_module_a};
+		.queue = &test_msgq_a};
 
 	struct weave_method_port large_port = {.name = "large_port",
 					       .target_method = &large_method,
@@ -258,10 +258,10 @@ ZTEST(weave_memory_suite, test_memory_pool_cycling)
 		req.value = i;
 
 		/* Direct call (no queue) for faster cycling */
-		test_method_simple.module = &test_module_no_queue;
+		test_method_simple.queue = NULL;
 		ret = weave_call_method(&test_port_simple, &req, sizeof(req), &reply, sizeof(reply),
 					K_NO_WAIT);
-		test_method_simple.module = &test_module_a;
+		test_method_simple.queue = &test_msgq_a;
 
 		zassert_equal(ret, 0, "Iteration %d failed", i);
 	}
@@ -275,7 +275,7 @@ ZTEST(weave_memory_suite, test_memory_leak_detection)
 
 	/* Setup handler */
 	sys_slist_init(&test_signal_basic.handlers);
-	test_handler_a.module = &test_module_no_queue;
+	test_handler_a.queue = NULL;
 	sys_slist_append(&test_signal_basic.handlers, &test_handler_a.node);
 
 	/* Emit many signals */

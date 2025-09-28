@@ -42,9 +42,6 @@ WEAVE_MSGQ_DEFINE(sensor_msgq, 10);
 /* Thread automatically started at boot */
 K_THREAD_DEFINE(sensor_thread_id, 2048, sensor_thread, NULL, NULL, NULL, 5, 0, 0);
 
-/* Define sensor module */
-WEAVE_MODULE_DEFINE(sensor_module, &sensor_msgq);
-
 /* Define signal for threshold events */
 WEAVE_SIGNAL_DEFINE(threshold_exceeded, struct threshold_exceeded_event);
 
@@ -57,8 +54,7 @@ static void sensor_timer_expired(struct k_timer *timer)
 
 /* Method implementations */
 
-static int read_sensor_handler(struct weave_module *module,
-			       const struct read_sensor_request *request,
+static int read_sensor_handler(void *user_data, const struct read_sensor_request *request,
 			       struct read_sensor_reply *reply)
 {
 	struct sensor_context *ctx = &sensor_ctx;
@@ -109,7 +105,7 @@ static int read_sensor_handler(struct weave_module *module,
 	return 0;
 }
 
-static int set_config_handler(struct weave_module *module, const struct set_config_request *request,
+static int set_config_handler(void *user_data, const struct set_config_request *request,
 			      struct set_config_reply *reply)
 {
 	struct sensor_context *ctx = &sensor_ctx;
@@ -145,7 +141,7 @@ static int set_config_handler(struct weave_module *module, const struct set_conf
 	return 0;
 }
 
-static int get_stats_handler(struct weave_module *module, const struct get_stats_request *request,
+static int get_stats_handler(void *user_data, const struct get_stats_request *request,
 			     struct get_stats_reply *reply)
 {
 	struct sensor_context *ctx = &sensor_ctx;
@@ -161,15 +157,15 @@ static int get_stats_handler(struct weave_module *module, const struct get_stats
 	return 0;
 }
 
-/* Register methods with module prefix */
-WEAVE_METHOD_REGISTER(sensor_read_sensor, read_sensor_handler, struct read_sensor_request,
-		      struct read_sensor_reply);
+/* Define methods with queued execution (using sensor_msgq) */
+WEAVE_METHOD_DEFINE_QUEUED(sensor_read_sensor, read_sensor_handler, &sensor_msgq,
+			   struct read_sensor_request, struct read_sensor_reply);
 
-WEAVE_METHOD_REGISTER(sensor_set_config, set_config_handler, struct set_config_request,
-		      struct set_config_reply);
+WEAVE_METHOD_DEFINE_QUEUED(sensor_set_config, set_config_handler, &sensor_msgq,
+			   struct set_config_request, struct set_config_reply);
 
-WEAVE_METHOD_REGISTER(sensor_get_stats, get_stats_handler, struct get_stats_request,
-		      struct get_stats_reply);
+WEAVE_METHOD_DEFINE_QUEUED(sensor_get_stats, get_stats_handler, &sensor_msgq,
+			   struct get_stats_request, struct get_stats_reply);
 
 /* Sensor thread - handles multiple event sources */
 void sensor_thread(void *p1, void *p2, void *p3)
@@ -182,11 +178,6 @@ void sensor_thread(void *p1, void *p2, void *p3)
 
 	LOG_INF("Sensor thread started");
 
-	/* Set method owners */
-	sensor_read_sensor.module = &sensor_module;
-	sensor_set_config.module = &sensor_module;
-	sensor_get_stats.module = &sensor_module;
-
 	/* Initialize timer */
 	k_timer_init(&ctx->sample_timer, sensor_timer_expired, NULL);
 	k_sem_init(&ctx->data_ready, 0, 1);
@@ -197,51 +188,38 @@ void sensor_thread(void *p1, void *p2, void *p3)
 			      K_MSEC(ctx->config.sample_rate_ms));
 	}
 
-	/* Setup polling for multiple event sources */
-	struct k_poll_event events[] = {
-		K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_MSGQ_DATA_AVAILABLE, K_POLL_MODE_NOTIFY_ONLY,
-					 &sensor_msgq),
-		K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_SEM_AVAILABLE, K_POLL_MODE_NOTIFY_ONLY,
-					 &ctx->data_ready),
-	};
-
-	/* Main event loop */
+	/* Process messages and timer events */
 	while (1) {
-		/* Wait for any event with timeout for periodic tasks */
-		int ret = k_poll(events, ARRAY_SIZE(events), K_MSEC(5000));
+		/* Poll multiple event sources */
+		struct k_poll_event events[] = {
+			K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_SEM_AVAILABLE, K_POLL_MODE_NOTIFY_ONLY,
+						 &ctx->data_ready),
+			K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_MSGQ_DATA_AVAILABLE,
+						 K_POLL_MODE_NOTIFY_ONLY, &sensor_msgq),
+		};
 
-		/* Handle Weave messages */
-		if (events[0].state == K_POLL_STATE_MSGQ_DATA_AVAILABLE) {
-			struct weave_message *msg;
+		k_poll(events, ARRAY_SIZE(events), K_FOREVER);
 
-			while (k_msgq_get(&sensor_msgq, &msg, K_NO_WAIT) == 0) {
-				LOG_DBG("Processing Weave message");
-				weave_process_message(&sensor_module, msg);
-			}
-
-			events[0].state = K_POLL_STATE_NOT_READY;
-		}
-
-		/* Handle timer-triggered sampling */
-		if (events[1].state == K_POLL_STATE_SEM_AVAILABLE) {
+		/* Check for timer expiry (auto-sample) */
+		if (events[0].state == K_POLL_STATE_SEM_AVAILABLE) {
 			k_sem_take(&ctx->data_ready, K_NO_WAIT);
 
-			LOG_DBG("Auto-sampling triggered");
-
-			/* Perform automatic reading */
+			/* Auto-sample reading */
 			struct read_sensor_request req = {.channel = 0};
-			struct read_sensor_reply rep;
+			struct read_sensor_reply reply;
 
-			/* Call method directly since we're in the same module */
-			read_sensor_handler(&sensor_module, &req, &rep);
-
-			events[1].state = K_POLL_STATE_NOT_READY;
+			LOG_INF("Auto-sample triggered");
+			read_sensor_handler(NULL, &req, &reply);
 		}
 
-		/* Periodic housekeeping (every 5 seconds or on events) */
-		if (ret == -EAGAIN) {
-			LOG_DBG("Sensor health check");
-			/* Could check hardware status, etc. */
+		/* Process method calls */
+		if (events[1].state == K_POLL_STATE_MSGQ_DATA_AVAILABLE) {
+			/* Process all pending messages */
+			weave_process_all_messages(&sensor_msgq);
 		}
+
+		/* Clear poll states for next iteration */
+		events[0].state = K_POLL_STATE_NOT_READY;
+		events[1].state = K_POLL_STATE_NOT_READY;
 	}
 }

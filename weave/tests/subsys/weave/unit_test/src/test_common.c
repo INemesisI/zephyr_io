@@ -15,12 +15,12 @@ static K_THREAD_STACK_ARRAY_DEFINE(msg_processor_stacks, 3, TEST_THREAD_STACK);
 static bool processor_threads_running = false;
 
 /* Message processor thread function */
-static void msg_processor_thread(void *module, void *unused1, void *unused2)
+static void msg_processor_thread(void *queue, void *unused1, void *unused2)
 {
-	struct weave_module *mod = (struct weave_module *)module;
+	struct k_msgq *msgq = (struct k_msgq *)queue;
 
 	while (processor_threads_running) {
-		weave_process_all_messages(mod);
+		weave_process_all_messages(msgq);
 		k_sleep(K_MSEC(1));
 	}
 }
@@ -36,27 +36,25 @@ K_MSGQ_DEFINE(test_msgq_a, sizeof(struct weave_message *), TEST_MSGQ_SIZE, 4);
 K_MSGQ_DEFINE(test_msgq_b, sizeof(struct weave_message *), TEST_MSGQ_SIZE, 4);
 K_MSGQ_DEFINE(test_msgq_c, sizeof(struct weave_message *), TEST_MSGQ_SIZE, 4);
 
-/* Define test modules */
-WEAVE_MODULE_DEFINE(test_module_a, &test_msgq_a);
-WEAVE_MODULE_DEFINE(test_module_b, &test_msgq_b);
-WEAVE_MODULE_DEFINE(test_module_c, &test_msgq_c);
-WEAVE_MODULE_DEFINE(test_module_no_queue, NULL);
+/* Test user data for handlers */
+int test_user_data_a = 0xA;
+int test_user_data_b = 0xB;
+int test_user_data_c = 0xC;
 
 /* Mock method handlers */
-int mock_method_handler_simple(void *module, const void *request, void *reply)
+int mock_method_handler_simple(void *user_data, const void *request, void *reply)
 {
-	struct weave_module *mod = (struct weave_module *)module;
 	struct test_tracker *tracker = &tracker_a;
 
-	/* Determine which tracker to use based on module */
-	if (mod == &test_module_b) {
+	/* Determine which tracker to use based on user_data */
+	if (user_data == &test_user_data_b) {
 		tracker = &tracker_b;
-	} else if (mod == &test_module_c) {
+	} else if (user_data == &test_user_data_c) {
 		tracker = &tracker_c;
 	}
 
 	atomic_inc(&tracker->call_count);
-	tracker->last_module = mod;
+	tracker->last_user_data = user_data;
 
 	if (request) {
 		memcpy(&tracker->last_request, request, sizeof(struct test_request));
@@ -74,7 +72,7 @@ int mock_method_handler_simple(void *module, const void *request, void *reply)
 	return 0;
 }
 
-int mock_method_handler_error(void *module, const void *request, void *reply)
+int mock_method_handler_error(void *user_data, const void *request, void *reply)
 {
 	struct test_tracker *tracker = &tracker_a;
 
@@ -86,7 +84,7 @@ int mock_method_handler_error(void *module, const void *request, void *reply)
 	return -TEST_ERROR_HANDLER;
 }
 
-int mock_method_handler_slow(void *module, const void *request, void *reply)
+int mock_method_handler_slow(void *user_data, const void *request, void *reply)
 {
 	struct test_tracker *tracker = &tracker_a;
 
@@ -105,12 +103,12 @@ int mock_method_handler_slow(void *module, const void *request, void *reply)
 	return 0;
 }
 
-void mock_signal_handler(void *module, const void *event)
+void mock_signal_handler(void *user_data, const void *event)
 {
 	struct test_tracker *tracker = &signal_tracker;
 
 	atomic_inc(&tracker->call_count);
-	tracker->last_module = (struct weave_module *)module;
+	tracker->last_user_data = user_data;
 
 	if (event) {
 		memcpy(&tracker->last_event, event, sizeof(struct test_event));
@@ -119,22 +117,23 @@ void mock_signal_handler(void *module, const void *event)
 	k_sem_give(&tracker->completion);
 }
 
-/* Define test methods */
-WEAVE_METHOD_REGISTER(test_method_simple, mock_method_handler_simple, struct test_request,
-		      struct test_reply);
+/* Define test methods with queued execution */
+WEAVE_METHOD_DEFINE_QUEUED(test_method_simple, mock_method_handler_simple, &test_msgq_a,
+			   struct test_request, struct test_reply, &test_user_data_a);
 
-WEAVE_METHOD_REGISTER(test_method_with_error, mock_method_handler_error, struct test_request,
-		      struct test_reply);
+WEAVE_METHOD_DEFINE_QUEUED(test_method_with_error, mock_method_handler_error, &test_msgq_a,
+			   struct test_request, struct test_reply, &test_user_data_a);
 
-WEAVE_METHOD_REGISTER(test_method_slow, mock_method_handler_slow, struct test_request,
-		      struct test_reply);
+WEAVE_METHOD_DEFINE_QUEUED(test_method_slow, mock_method_handler_slow, &test_msgq_a,
+			   struct test_request, struct test_reply, &test_user_data_a);
 
 /* Method with no handler */
 struct weave_method test_method_no_handler = {.name = "test_method_no_handler",
 					      .handler = NULL,
 					      .request_size = sizeof(struct test_request),
 					      .reply_size = sizeof(struct test_reply),
-					      .module = &test_module_a};
+					      .queue = &test_msgq_a,
+					      .user_data = &test_user_data_a};
 
 /* Define test method ports */
 WEAVE_METHOD_PORT_DEFINE(test_port_simple, struct test_request, struct test_reply);
@@ -154,16 +153,20 @@ WEAVE_SIGNAL_DEFINE(test_signal_basic, struct test_event);
 WEAVE_SIGNAL_DEFINE(test_signal_multi, struct test_event);
 WEAVE_SIGNAL_DEFINE(test_signal_empty, struct test_event);
 
-/* Define signal handlers */
-WEAVE_SIGNAL_HANDLER_REGISTER(test_handler_a, mock_signal_handler, struct test_event);
-WEAVE_SIGNAL_HANDLER_REGISTER(test_handler_b, mock_signal_handler, struct test_event);
-WEAVE_SIGNAL_HANDLER_REGISTER(test_handler_c, mock_signal_handler, struct test_event);
+/* Define signal handlers with queued execution */
+WEAVE_SIGNAL_HANDLER_DEFINE_QUEUED(test_handler_a, mock_signal_handler, &test_msgq_a,
+				   struct test_event, &test_user_data_a);
+WEAVE_SIGNAL_HANDLER_DEFINE_QUEUED(test_handler_b, mock_signal_handler, &test_msgq_b,
+				   struct test_event, &test_user_data_b);
+WEAVE_SIGNAL_HANDLER_DEFINE_QUEUED(test_handler_c, mock_signal_handler, &test_msgq_c,
+				   struct test_event, &test_user_data_c);
 
 /* Handler with no module */
-struct weave_signal_handler test_handler_no_module = {.node = {NULL},
-						      .name = "test_handler_no_module",
-						      .handler = mock_signal_handler,
-						      .module = NULL};
+struct weave_signal_handler test_handler_no_queue = {.node = {NULL},
+						     .name = "test_handler_no_queue",
+						     .handler = mock_signal_handler,
+						     .queue = NULL,
+						     .user_data = NULL};
 
 /* Helper function implementations */
 void reset_tracker(struct test_tracker *tracker)
@@ -174,7 +177,7 @@ void reset_tracker(struct test_tracker *tracker)
 	memset(&tracker->last_request, 0, sizeof(tracker->last_request));
 	memset(&tracker->last_reply, 0, sizeof(tracker->last_reply));
 	memset(&tracker->last_event, 0, sizeof(tracker->last_event));
-	tracker->last_module = NULL;
+	tracker->last_user_data = NULL;
 	/* Don't reset semaphore - it's initialized once */
 }
 
@@ -194,10 +197,9 @@ void reset_test_environment(void)
 
 	/* Process any pending messages to release resources */
 	for (int i = 0; i < 50; i++) {
-		weave_process_all_messages(&test_module_a);
-		weave_process_all_messages(&test_module_b);
-		weave_process_all_messages(&test_module_c);
-		weave_process_all_messages(&test_module_no_queue);
+		weave_process_all_messages(&test_msgq_a);
+		weave_process_all_messages(&test_msgq_b);
+		weave_process_all_messages(&test_msgq_c);
 	}
 
 	/* Drain all message queues */
@@ -205,27 +207,27 @@ void reset_test_environment(void)
 	drain_message_queue(&test_msgq_b);
 	drain_message_queue(&test_msgq_c);
 
-	/* Reset method module associations */
-	test_method_simple.module = &test_module_a;
-	test_method_with_error.module = &test_module_a;
-	test_method_slow.module = &test_module_a;
-	test_method_no_handler.module = &test_module_a;
+	/* Reset method queue associations */
+	test_method_simple.queue = &test_msgq_a;
+	test_method_with_error.queue = &test_msgq_a;
+	test_method_slow.queue = &test_msgq_a;
+	test_method_no_handler.queue = &test_msgq_a;
 
-	/* Reset handler module associations */
-	test_handler_a.module = &test_module_a;
-	test_handler_b.module = &test_module_b;
-	test_handler_c.module = &test_module_c;
+	/* Reset handler queue associations */
+	test_handler_a.queue = &test_msgq_a;
+	test_handler_b.queue = &test_msgq_b;
+	test_handler_c.queue = &test_msgq_c;
 
 	/* Clear signal handler lists */
 	sys_slist_init(&test_signal_basic.handlers);
 	sys_slist_init(&test_signal_multi.handlers);
 	sys_slist_init(&test_signal_empty.handlers);
 
-	/* Wire default connections */
-	test_port_simple.target_method = &test_method_simple;
-	test_port_error.target_method = &test_method_with_error;
-	test_port_slow.target_method = &test_method_slow;
-	test_port_unconnected.target_method = NULL;
+	/* Wire default connections using API */
+	weave_method_connect(&test_port_simple, &test_method_simple);
+	weave_method_connect(&test_port_error, &test_method_with_error);
+	weave_method_connect(&test_port_slow, &test_method_slow);
+	weave_method_disconnect(&test_port_unconnected); /* Explicitly unconnected */
 }
 
 int wait_for_completion(struct test_tracker *tracker, k_timeout_t timeout)
@@ -248,24 +250,16 @@ int wait_for_count(atomic_t *counter, int expected, k_timeout_t timeout)
 
 void drain_message_queue(struct k_msgq *queue)
 {
-	struct weave_message *msg;
-	while (k_msgq_get(queue, &msg, K_NO_WAIT) == 0) {
+	void *msg_ptr;
+	while (k_msgq_get(queue, &msg_ptr, K_NO_WAIT) == 0) {
 		/* Message drained */
 	}
 }
 
 int fill_message_queue(struct k_msgq *queue)
 {
-	/* Use a static dummy message to avoid using invalid pointers */
-	static struct weave_message dummy_msg = {.type = WEAVE_MSG_REQUEST,
-						 .method = NULL,
-						 .request_data = NULL,
-						 .reply_data = NULL,
-						 .request_size = 0,
-						 .reply_size = 0,
-						 .completion = NULL,
-						 .result = NULL};
-	struct weave_message *dummy_ptr = &dummy_msg;
+	/* Fill queue with dummy pointers - queue holds pointers to messages */
+	static void *dummy_ptr = NULL;
 	int count = 0;
 
 	/* Fill until queue is full */
@@ -317,17 +311,17 @@ void common_test_setup(void *fixture)
 	/* Reset test environment for each test */
 	reset_test_environment();
 
-	/* Restore default method-to-module wiring to prevent cross-test interference */
-	test_method_simple.module = &test_module_a;
-	test_method_with_error.module = &test_module_a;
-	test_method_slow.module = &test_module_a;
-	test_method_no_handler.module = &test_module_a;
+	/* Restore default method queue wiring to prevent cross-test interference */
+	test_method_simple.queue = &test_msgq_a;
+	test_method_with_error.queue = &test_msgq_a;
+	test_method_slow.queue = &test_msgq_a;
+	test_method_no_handler.queue = &test_msgq_a;
 
-	/* Restore default port-to-method wiring */
-	test_port_simple.target_method = &test_method_simple;
-	test_port_error.target_method = &test_method_with_error;
-	test_port_slow.target_method = &test_method_slow;
-	test_port_unconnected.target_method = NULL; /* Explicitly unconnected */
+	/* Restore default port-to-method wiring using API */
+	weave_method_connect(&test_port_simple, &test_method_simple);
+	weave_method_connect(&test_port_error, &test_method_with_error);
+	weave_method_connect(&test_port_slow, &test_method_slow);
+	weave_method_disconnect(&test_port_unconnected); /* Explicitly unconnected */
 
 	/* Clear signal handler lists to prevent cross-test interference */
 	/* Note: In production, use WEAVE_SIGNAL_CONNECT for compile-time wiring */
@@ -340,15 +334,15 @@ void common_test_setup(void *fixture)
 		processor_threads_running = true;
 
 		k_thread_create(&msg_processor_threads[0], msg_processor_stacks[0],
-				TEST_THREAD_STACK, msg_processor_thread, &test_module_a, NULL, NULL,
+				TEST_THREAD_STACK, msg_processor_thread, &test_msgq_a, NULL, NULL,
 				TEST_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 		k_thread_create(&msg_processor_threads[1], msg_processor_stacks[1],
-				TEST_THREAD_STACK, msg_processor_thread, &test_module_b, NULL, NULL,
+				TEST_THREAD_STACK, msg_processor_thread, &test_msgq_b, NULL, NULL,
 				TEST_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 		k_thread_create(&msg_processor_threads[2], msg_processor_stacks[2],
-				TEST_THREAD_STACK, msg_processor_thread, &test_module_c, NULL, NULL,
+				TEST_THREAD_STACK, msg_processor_thread, &test_msgq_c, NULL, NULL,
 				TEST_THREAD_PRIORITY, 0, K_NO_WAIT);
 	}
 }
@@ -360,10 +354,9 @@ void common_test_teardown(void *fixture)
 
 	/* Process any pending messages to release resources */
 	for (int i = 0; i < 50; i++) {
-		weave_process_all_messages(&test_module_a);
-		weave_process_all_messages(&test_module_b);
-		weave_process_all_messages(&test_module_c);
-		weave_process_all_messages(&test_module_no_queue);
+		weave_process_all_messages(&test_msgq_a);
+		weave_process_all_messages(&test_msgq_b);
+		weave_process_all_messages(&test_msgq_c);
 	}
 
 	/* Drain all queues to prevent interference */

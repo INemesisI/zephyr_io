@@ -12,6 +12,7 @@
 #include <zephyr/sys/iterable_sections.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/toolchain/common.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -35,7 +36,6 @@ enum weave_msg_type {
 };
 
 /* Forward declarations */
-struct weave_module;
 struct weave_method;
 struct weave_method_port;
 struct weave_signal;
@@ -45,20 +45,20 @@ struct weave_message;
 /**
  * @brief Method handler function type
  *
- * @param module Module instance
+ * @param user_data User data associated with the method
  * @param request Request data
  * @param reply Reply buffer
  * @return 0 on success, negative errno on error
  */
-typedef int (*weave_method_handler_t)(void *module, const void *request, void *reply);
+typedef int (*weave_method_handler_t)(void *user_data, const void *request, void *reply);
 
 /**
  * @brief Signal handler function type
  *
- * @param module Module instance receiving the signal
+ * @param user_data User data associated with the handler
  * @param event Signal event data
  */
-typedef void (*weave_signal_handler_t)(void *module, const void *event);
+typedef void (*weave_signal_handler_t)(void *user_data, const void *event);
 
 /**
  * @brief Message structure passed through k_msgq
@@ -69,13 +69,16 @@ struct weave_message {
 	/* Message metadata */
 	enum weave_msg_type type;
 
-	/* Target method (for requests) */
-	struct weave_method *method;
+	/* Target method (for requests) or signal handler (for signals) */
+	union {
+		struct weave_method *method;
+		struct weave_signal_handler *handler;
+	} target;
 
 	/* Payload */
-	const void *request_data;
+	const void *data;
 	void *reply_data;
-	size_t request_size;
+	size_t data_size;
 	size_t reply_size;
 
 	/* For synchronous calls */
@@ -91,7 +94,8 @@ struct weave_method {
 	weave_method_handler_t handler;
 	size_t request_size;
 	size_t reply_size;
-	struct weave_module *module; /* Owning module */
+	struct k_msgq *queue; /* Optional message queue for deferred execution */
+	void *user_data;      /* User data passed to handler */
 };
 
 /**
@@ -122,29 +126,12 @@ struct weave_signal_handler {
 	sys_snode_t node;
 	const char *name;
 	weave_signal_handler_t handler;
-	struct weave_module *module; /* Owning module */
-};
-
-/**
- * @brief Weave module structure
- *
- * Modules can integrate with existing threads or run standalone
- */
-struct weave_module {
-	const char *name;
-
-	/* Message queue for incoming requests (optional) */
-	struct k_msgq *request_queue;
-
-	/* Module private data */
-	void *private_data;
+	struct k_msgq *queue; /* Optional message queue for deferred execution */
+	void *user_data;      /* User data passed to handler */
 };
 
 /**
  * @brief Message context for method calls and signals
- *
- * Only the header is allocated from slab, data buffers are allocated
- * from heap based on actual size needed
  */
 struct weave_message_context {
 	struct weave_message message;
@@ -155,7 +142,7 @@ struct weave_message_context {
 	atomic_t refcount; /* Reference count for safe memory management */
 
 	/* Track allocated buffers for cleanup */
-	void *allocated_request_data;
+	void *allocated_data;
 	void *allocated_reply_data;
 };
 
@@ -170,55 +157,249 @@ struct weave_signal_connection {
 	struct weave_signal_handler *handler;
 };
 
-/**
- * @brief Register a method (service-side)
- *
- * Define your handler function first, then use this macro to register it.
- *
- * @param name Method name for wiring (e.g., read_sensor)
- * @param handler_fn Handler function name
- * @param req_type Request type (e.g., struct read_sensor_request)
- * @param rep_type Reply type (e.g., struct read_sensor_reply)
- *
- * Example:
- *   int my_read_sensor(struct weave_module *module,
- *                      const struct read_sensor_request *request,
- *                      struct read_sensor_reply *reply) { ... }
- *
- *   WEAVE_METHOD_REGISTER(read_sensor, my_read_sensor,
- *                        struct read_sensor_request,
- *                        struct read_sensor_reply);
- */
-#define WEAVE_METHOD_REGISTER(name, handler_fn, req_type, rep_type)                                \
-	/* Type-safe wrapper that casts void* to proper types */                                   \
-	static int _weave_method_##name##_wrapper(void *module, const void *request, void *reply)  \
-	{                                                                                          \
-		return handler_fn((struct weave_module *)module, (const req_type *)request,        \
-				  (rep_type *)reply);                                              \
-	}                                                                                          \
-	/* Method descriptor for runtime wiring */                                                 \
-	struct weave_method name = {#name, _weave_method_##name##_wrapper, sizeof(req_type),       \
-				    sizeof(rep_type), NULL}
+/* ============================================================================
+ * INTERNAL HELPER MACROS
+ * ============================================================================ */
 
 /**
- * @brief Define a method call port (client-side)
- *
- * @param name Port name (e.g., call_read_temperature)
- * @param req_type Request type
- * @param rep_type Reply type
+ * @brief Generate type-safe wrapper for method handlers
  */
-#define WEAVE_METHOD_PORT_DEFINE(name, req_type, rep_type)                                         \
-	struct weave_method_port name = {#name, NULL, sizeof(req_type), sizeof(rep_type)}
+#define Z_WEAVE_METHOD_WRAPPER(_name, _handler, _req_type, _rep_type)                              \
+	static int _weave_method_##_name##_wrapper(void *user_data, const void *request,           \
+						   void *reply)                                    \
+	{                                                                                          \
+		return _handler(user_data, (const _req_type *)request, (_rep_type *)reply);        \
+	}
+
+/**
+ * @brief Generate type-safe wrapper for signal handlers
+ */
+#define Z_WEAVE_SIGNAL_WRAPPER(_name, _handler, _event_type)                                       \
+	static void _weave_handler_##_name##_wrapper(void *user_data, const void *event)           \
+	{                                                                                          \
+		_handler(user_data, (const _event_type *)event);                                   \
+	}
+
+/* ============================================================================
+ * METHOD MACROS - Following flow's DECLARE/DEFINE pattern
+ * ============================================================================ */
+
+/**
+ * @brief Declare a method (forward declaration)
+ *
+ * @param name Method variable name
+ */
+#define WEAVE_METHOD_DECLARE(name) extern struct weave_method name
+
+/**
+ * @brief Method initializer for static initialization
+ *
+ * @param _name Method name (for debug)
+ * @param _handler Handler function wrapper
+ * @param _queue Message queue (or NULL)
+ * @param _user_data User data
+ * @param _req_size Request size
+ * @param _rep_size Reply size
+ */
+#define WEAVE_METHOD_INITIALIZER(_name, _handler, _queue, _user_data, _req_size, _rep_size)        \
+	{                                                                                          \
+		.name = STRINGIFY(_name), .handler = _handler, .request_size = _req_size,          \
+				  .reply_size = _rep_size, .queue = _queue,                        \
+				  .user_data = _user_data                                          \
+	}
+
+/**
+ * @brief Define a method with immediate execution
+ *
+ * Usage:
+ *   WEAVE_METHOD_DEFINE_IMMEDIATE(my_method, handler, struct req, struct rep)
+ *   WEAVE_METHOD_DEFINE_IMMEDIATE(my_method, handler, struct req, struct rep, user_data)
+ *
+ * @param _name Method variable name
+ * @param _handler Handler function
+ * @param _req_type Request structure type
+ * @param _rep_type Reply structure type
+ * @param ... Optional user data (defaults to NULL)
+ */
+#define WEAVE_METHOD_DEFINE_IMMEDIATE(...)                                                         \
+	UTIL_CAT(Z_WEAVE_METHOD_IMMEDIATE_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+
+#define Z_WEAVE_METHOD_IMMEDIATE_4(_name, _handler, _req_type, _rep_type)                          \
+	Z_WEAVE_METHOD_WRAPPER(_name, _handler, _req_type, _rep_type)                              \
+	struct weave_method _name =                                                                \
+		WEAVE_METHOD_INITIALIZER(_name, _weave_method_##_name##_wrapper, NULL, NULL,       \
+					 sizeof(_req_type), sizeof(_rep_type))
+
+#define Z_WEAVE_METHOD_IMMEDIATE_5(_name, _handler, _req_type, _rep_type, _user_data)              \
+	Z_WEAVE_METHOD_WRAPPER(_name, _handler, _req_type, _rep_type)                              \
+	struct weave_method _name =                                                                \
+		WEAVE_METHOD_INITIALIZER(_name, _weave_method_##_name##_wrapper, NULL, _user_data, \
+					 sizeof(_req_type), sizeof(_rep_type))
+
+/**
+ * @brief Define a method with queued execution
+ *
+ * Usage:
+ *   WEAVE_METHOD_DEFINE_QUEUED(my_method, handler, queue, struct req, struct rep)
+ *   WEAVE_METHOD_DEFINE_QUEUED(my_method, handler, queue, struct req, struct rep, user_data)
+ *
+ * @param _name Method variable name
+ * @param _handler Handler function
+ * @param _queue Message queue for deferred execution
+ * @param _req_type Request structure type
+ * @param _rep_type Reply structure type
+ * @param ... Optional user data (defaults to NULL)
+ */
+#define WEAVE_METHOD_DEFINE_QUEUED(...)                                                            \
+	UTIL_CAT(Z_WEAVE_METHOD_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+
+#define Z_WEAVE_METHOD_QUEUED_5(_name, _handler, _queue, _req_type, _rep_type)                     \
+	Z_WEAVE_METHOD_WRAPPER(_name, _handler, _req_type, _rep_type)                              \
+	struct weave_method _name =                                                                \
+		WEAVE_METHOD_INITIALIZER(_name, _weave_method_##_name##_wrapper, _queue, NULL,     \
+					 sizeof(_req_type), sizeof(_rep_type))
+
+#define Z_WEAVE_METHOD_QUEUED_6(_name, _handler, _queue, _req_type, _rep_type, _user_data)         \
+	Z_WEAVE_METHOD_WRAPPER(_name, _handler, _req_type, _rep_type)                              \
+	struct weave_method _name =                                                                \
+		WEAVE_METHOD_INITIALIZER(_name, _weave_method_##_name##_wrapper, _queue,           \
+					 _user_data, sizeof(_req_type), sizeof(_rep_type))
+
+/* ============================================================================
+ * METHOD PORT MACROS (Client-side)
+ * ============================================================================ */
+
+/**
+ * @brief Declare a method port
+ */
+#define WEAVE_METHOD_PORT_DECLARE(name) extern struct weave_method_port name
+
+/**
+ * @brief Define a method port for calling methods
+ *
+ * @param name Port variable name
+ * @param req_type Request structure type
+ * @param rep_type Reply structure type
+ */
+#define WEAVE_METHOD_PORT_DEFINE(_port_name, req_type, rep_type)                                   \
+	struct weave_method_port _port_name = {.name = STRINGIFY(_port_name),                      \
+								 .target_method = NULL,            \
+								 .request_size = sizeof(req_type), \
+								 .reply_size = sizeof(rep_type)}
+
+/* ============================================================================
+ * SIGNAL MACROS
+ * ============================================================================ */
+
+/**
+ * @brief Declare a signal
+ */
+#define WEAVE_SIGNAL_DECLARE(name) extern struct weave_signal name
+
+/**
+ * @brief Define a signal
+ *
+ * @param name Signal variable name
+ * @param event_type Event structure type
+ */
+#define WEAVE_SIGNAL_DEFINE(_name, event_type)                                                     \
+	struct weave_signal _name = {                                                              \
+		.name = STRINGIFY(_name), .event_size = sizeof(event_type),                        \
+				  .handlers = SYS_SLIST_STATIC_INIT(&(_name.handlers))}
+
+/* ============================================================================
+ * SIGNAL HANDLER MACROS
+ * ============================================================================ */
+
+/**
+ * @brief Declare a signal handler
+ */
+#define WEAVE_SIGNAL_HANDLER_DECLARE(name) extern struct weave_signal_handler name
+
+/**
+ * @brief Signal handler initializer for static initialization
+ *
+ * @param _name Handler name (for debug)
+ * @param _handler Handler function wrapper
+ * @param _queue Message queue (or NULL)
+ * @param _user_data User data
+ */
+#define WEAVE_SIGNAL_HANDLER_INITIALIZER(_name, _handler, _queue, _user_data)                      \
+	{                                                                                          \
+		.node = {NULL}, .name = STRINGIFY(_name), .handler = _handler, .queue = _queue,    \
+						  .user_data = _user_data                          \
+	}
+
+/**
+ * @brief Define a signal handler with immediate execution
+ *
+ * Usage:
+ *   WEAVE_SIGNAL_HANDLER_DEFINE_IMMEDIATE(my_handler, handler_fn, struct event)
+ *   WEAVE_SIGNAL_HANDLER_DEFINE_IMMEDIATE(my_handler, handler_fn, struct event, user_data)
+ *
+ * @param _name Handler variable name
+ * @param _handler Handler function
+ * @param _event_type Event structure type
+ * @param ... Optional user data (defaults to NULL)
+ */
+#define WEAVE_SIGNAL_HANDLER_DEFINE_IMMEDIATE(...)                                                 \
+	UTIL_CAT(Z_WEAVE_SIGNAL_HANDLER_IMMEDIATE_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+
+#define Z_WEAVE_SIGNAL_HANDLER_IMMEDIATE_3(_name, _handler, _event_type)                           \
+	Z_WEAVE_SIGNAL_WRAPPER(_name, _handler, _event_type)                                       \
+	struct weave_signal_handler _name = WEAVE_SIGNAL_HANDLER_INITIALIZER(                      \
+		_name, _weave_handler_##_name##_wrapper, NULL, NULL)
+
+#define Z_WEAVE_SIGNAL_HANDLER_IMMEDIATE_4(_name, _handler, _event_type, _user_data)               \
+	Z_WEAVE_SIGNAL_WRAPPER(_name, _handler, _event_type)                                       \
+	struct weave_signal_handler _name = WEAVE_SIGNAL_HANDLER_INITIALIZER(                      \
+		_name, _weave_handler_##_name##_wrapper, NULL, _user_data)
+
+/**
+ * @brief Define a signal handler with queued execution
+ *
+ * Usage:
+ *   WEAVE_SIGNAL_HANDLER_DEFINE_QUEUED(my_handler, handler_fn, queue, struct event)
+ *   WEAVE_SIGNAL_HANDLER_DEFINE_QUEUED(my_handler, handler_fn, queue, struct event, user_data)
+ *
+ * @param _name Handler variable name
+ * @param _handler Handler function
+ * @param _queue Message queue for deferred execution
+ * @param _event_type Event structure type
+ * @param ... Optional user data (defaults to NULL)
+ */
+#define WEAVE_SIGNAL_HANDLER_DEFINE_QUEUED(...)                                                    \
+	UTIL_CAT(Z_WEAVE_SIGNAL_HANDLER_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+
+#define Z_WEAVE_SIGNAL_HANDLER_QUEUED_4(_name, _handler, _queue, _event_type)                      \
+	Z_WEAVE_SIGNAL_WRAPPER(_name, _handler, _event_type)                                       \
+	struct weave_signal_handler _name = WEAVE_SIGNAL_HANDLER_INITIALIZER(                      \
+		_name, _weave_handler_##_name##_wrapper, _queue, NULL)
+
+#define Z_WEAVE_SIGNAL_HANDLER_QUEUED_5(_name, _handler, _queue, _event_type, _user_data)          \
+	Z_WEAVE_SIGNAL_WRAPPER(_name, _handler, _event_type)                                       \
+	struct weave_signal_handler _name = WEAVE_SIGNAL_HANDLER_INITIALIZER(                      \
+		_name, _weave_handler_##_name##_wrapper, _queue, _user_data)
+
+/* ============================================================================
+ * MESSAGE QUEUE MACROS
+ * ============================================================================ */
+
+/**
+ * @brief Define a message queue for methods/signals
+ */
+#define WEAVE_MSGQ_DEFINE(_name, _max_msgs)                                                        \
+	K_MSGQ_DEFINE(_name, sizeof(struct weave_message *), _max_msgs, 4)
+
+/* ============================================================================
+ * CONNECTION MACROS
+ * ============================================================================ */
 
 /**
  * @brief Connect a method port to a method
  *
- * @param port_name Method port (e.g., call_read_temperature)
- * @param method_name Target method (e.g., read_temperature)
- *
- * Note: Size matching is enforced at runtime during initialization.
- * The types specified in WEAVE_METHOD_DEFINE and WEAVE_METHOD_PORT_DEFINE
- * ensure compile-time type safety.
+ * @param port_name Method port variable
+ * @param method_name Target method variable
  */
 #define WEAVE_METHOD_CONNECT(port_name, method_name)                                               \
 	static const TYPE_SECTION_ITERABLE(                                                        \
@@ -227,52 +408,10 @@ struct weave_signal_connection {
 		.port = &port_name, .method = &method_name}
 
 /**
- * @brief Define a signal emission port
- *
- * @param name Signal name (e.g., temperature_changed)
- * @param event_type Event data type (e.g., struct temperature_changed_event)
- */
-#define WEAVE_SIGNAL_DEFINE(signal_name, event_type)                                               \
-	struct weave_signal signal_name = {.name = #signal_name,                                   \
-					   .event_size = sizeof(event_type),                       \
-					   .handlers =                                             \
-						   SYS_SLIST_STATIC_INIT(&(signal_name.handlers))}
-
-/**
- * @brief Register a signal handler (slot)
- *
- * Define your handler function first, then use this macro to register it.
- *
- * @param name Handler name for wiring (e.g., on_threshold_exceeded)
- * @param handler_fn Handler function name
- * @param event_type Event data type (e.g., struct threshold_exceeded_event)
- *
- * Example:
- *   void handle_threshold(struct weave_module *module,
- *                        const struct threshold_exceeded_event *event) { ... }
- *
- *   WEAVE_SIGNAL_HANDLER_REGISTER(on_threshold_exceeded, handle_threshold,
- *                                 struct threshold_exceeded_event);
- */
-#define WEAVE_SIGNAL_HANDLER_REGISTER(name, handler_fn, event_type)                                \
-	/* Type-safe wrapper that casts void* to proper types */                                   \
-	static void _weave_handler_##name##_wrapper(void *module, const void *event)               \
-	{                                                                                          \
-		handler_fn((struct weave_module *)module, (const event_type *)event);              \
-	}                                                                                          \
-	/* Handler descriptor for runtime wiring */                                                \
-	struct weave_signal_handler name = {                                                       \
-		{NULL},                          /* node */                                        \
-		#name,                           /* name */                                        \
-		_weave_handler_##name##_wrapper, /* handler */                                     \
-		NULL                             /* module */                                      \
-	}
-
-/**
  * @brief Connect a signal to a handler
  *
- * @param signal_name Signal (e.g., temperature_changed)
- * @param handler_name Handler (e.g., on_temperature_changed)
+ * @param signal_name Signal variable
+ * @param handler_name Handler variable
  */
 #define WEAVE_SIGNAL_CONNECT(signal_name, handler_name)                                            \
 	static const TYPE_SECTION_ITERABLE(                                                        \
@@ -280,26 +419,9 @@ struct weave_signal_connection {
 		weave_signal_connection, _CONCAT(__weave_signal_conn_, __LINE__)) = {              \
 		.signal = &signal_name, .handler = &handler_name}
 
-/**
- * @brief Define a module with optional message queue
- *
- * @param _name Module variable name
- * @param _queue Message queue (or NULL for direct execution)
- */
-#define WEAVE_MODULE_DEFINE(_name, _queue)                                                         \
-	struct weave_module _name = {                                                              \
-		.name = STRINGIFY(_name), .request_queue = _queue,                                 \
-	};                                                                                         \
-	static TYPE_SECTION_ITERABLE(struct weave_module *, _name##_ptr, weave_modules,            \
-				     _name##_ptr) = &_name
-
-/**
- * @brief Define a message queue for a module
- */
-#define WEAVE_MSGQ_DEFINE(_name, _max_msgs)                                                        \
-	K_MSGQ_DEFINE(_name, sizeof(struct weave_message *), _max_msgs, 4)
-
-/* Runtime API */
+/* ============================================================================
+ * RUNTIME API
+ * ============================================================================ */
 
 /**
  * @brief Initialize the Weave framework
@@ -331,7 +453,7 @@ int weave_call_method(struct weave_method_port *port, const void *request, size_
  */
 static inline bool weave_method_is_immediate(const struct weave_method *method)
 {
-	return method && method->module && !method->module->request_queue;
+	return method && method->queue == NULL;
 }
 
 /**
@@ -342,27 +464,61 @@ static inline bool weave_method_is_immediate(const struct weave_method *method)
  */
 static inline bool weave_method_is_queued(const struct weave_method *method)
 {
-	return method && method->module && method->module->request_queue != NULL;
+	return method && method->queue != NULL;
 }
 
 /**
- * @brief Check if a method port will queue its calls
+ * @brief Connect a method port to a method
+ *
+ * This establishes a connection between a method port and its target method.
+ * The port and method must have matching request and reply sizes.
+ *
+ * @param port Method port to connect
+ * @param method Target method
+ * @return 0 on success, -EINVAL if sizes don't match
+ */
+static inline int weave_method_connect(struct weave_method_port *port, struct weave_method *method)
+{
+	if (!port || !method) {
+		return -EINVAL;
+	}
+
+	/* Validate size compatibility */
+	if (port->request_size != method->request_size || port->reply_size != method->reply_size) {
+		return -EINVAL;
+	}
+
+	port->target_method = method;
+	return 0;
+}
+
+/**
+ * @brief Disconnect a method port
+ *
+ * @param port Method port to disconnect
+ */
+static inline void weave_method_disconnect(struct weave_method_port *port)
+{
+	if (port) {
+		port->target_method = NULL;
+	}
+}
+
+/**
+ * @brief Check if a method port is connected
  *
  * @param port Method port to check
- * @return true if calls through this port will be queued, false if immediate
+ * @return true if connected, false otherwise
  */
-static inline bool weave_port_will_queue(const struct weave_method_port *port)
+static inline bool weave_method_is_connected(const struct weave_method_port *port)
 {
-	if (!port || !port->target_method) {
-		return false;
-	}
-	return weave_method_is_queued(port->target_method);
+	return port && port->target_method != NULL;
 }
 
 /**
  * @brief Emit a signal to all handlers
  *
- * Can be called from ISR context when using K_NO_WAIT
+ * Can be called from ISR context when all handlers are immediate (no queues)
  *
  * @param signal Signal port
  * @param event Event data
@@ -371,24 +527,25 @@ static inline bool weave_port_will_queue(const struct weave_method_port *port)
 int weave_emit_signal(struct weave_signal *signal, const void *event);
 
 /**
- * @brief Process a message received by a module
+ * @brief Process a single message from a queue
  *
- * Helper function that modules call from their threads to process messages
+ * Helper function for processing threads to handle queued methods/signals
  *
- * @param module Module instance
- * @param msg Message to process
+ * @param queue Message queue to process from
+ * @param timeout Maximum time to wait for a message
+ * @return 0 on success, -EAGAIN if no message, negative errno on error
  */
-void weave_process_message(struct weave_module *module, struct weave_message *msg);
+int weave_process_message(struct k_msgq *queue, k_timeout_t timeout);
 
 /**
- * @brief Process all pending messages in a module's queue
+ * @brief Process all pending messages in a queue
  *
- * Helper for modules to drain their message queue
+ * Helper for draining a message queue
  *
- * @param module Module instance
+ * @param queue Message queue to process
  * @return Number of messages processed
  */
-int weave_process_all_messages(struct weave_module *module);
+int weave_process_all_messages(struct k_msgq *queue);
 
 /** @} */
 

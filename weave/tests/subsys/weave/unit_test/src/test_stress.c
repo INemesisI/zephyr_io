@@ -33,13 +33,13 @@ static struct k_sem stress_processor_done;
 
 static void stress_processor_thread(void *p1, void *p2, void *p3)
 {
-	struct weave_module *module = (struct weave_module *)p1;
+	struct k_msgq *queue = (struct k_msgq *)p1;
 	int total_processed = 0;
 	int max_iterations = 1000; /* Safety limit */
 
 	/* Process messages until all are handled or stopped */
 	while (stress_processor_run && total_processed < max_iterations) {
-		int processed = weave_process_all_messages(module);
+		int processed = weave_process_all_messages(queue);
 		if (processed == 0) {
 			/* No more messages, exit early */
 			break;
@@ -68,7 +68,7 @@ ZTEST(weave_stress_suite, test_maximum_pending_requests)
 
 	/* Start processor thread with delay to allow queuing */
 	tid = k_thread_create(&processor_thread, stress_test_stack, TEST_THREAD_STACK,
-			      stress_processor_thread, &test_module_a, NULL, NULL,
+			      stress_processor_thread, &test_msgq_a, NULL, NULL,
 			      TEST_THREAD_PRIORITY, 0, K_MSEC(100));
 
 	/* Queue maximum requests */
@@ -101,7 +101,7 @@ ZTEST(weave_stress_suite, test_rapid_signal_emission)
 
 	/* Setup direct handler for fastest processing */
 	sys_slist_init(&test_signal_basic.handlers);
-	test_handler_a.module = &test_module_no_queue;
+	test_handler_a.queue = NULL;
 	sys_slist_append(&test_signal_basic.handlers, &test_handler_a.node);
 
 	/* Emit many signals rapidly */
@@ -129,7 +129,7 @@ ZTEST(weave_stress_suite, test_memory_pool_cycling)
 	int64_t start, end;
 
 	/* Use direct execution for speed */
-	test_method_simple.module = &test_module_no_queue;
+	test_method_simple.queue = NULL;
 
 	/* Rapid allocate/free cycles */
 	start = k_uptime_get();
@@ -142,7 +142,7 @@ ZTEST(weave_stress_suite, test_memory_pool_cycling)
 	end = k_uptime_get();
 
 	/* Restore module */
-	test_method_simple.module = &test_module_a;
+	test_method_simple.queue = &test_msgq_a;
 
 	LOG_INF("Completed 500 memory cycles in %lld ms", end - start);
 }
@@ -170,7 +170,7 @@ static void producer_fn(void *p1, void *p2, void *p3)
 static void consumer_fn(void *p1, void *p2, void *p3)
 {
 	for (int i = 0; i < 200; i++) {
-		int processed = weave_process_all_messages(&test_module_a);
+		int processed = weave_process_all_messages(&test_msgq_a);
 		atomic_add(&consume_count, processed);
 		k_sleep(K_MSEC(1));
 	}
@@ -230,7 +230,7 @@ ZTEST(weave_stress_suite, test_large_payload_transfer)
 					    .handler = mock_method_handler_simple,
 					    .request_size = sizeof(large_req),
 					    .reply_size = sizeof(large_reply),
-					    .module = &test_module_no_queue};
+					    .queue = NULL};
 
 	struct weave_method_port large_port = {.name = "large_port",
 					       .target_method = &large_method,

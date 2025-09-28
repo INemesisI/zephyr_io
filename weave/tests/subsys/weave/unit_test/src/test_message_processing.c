@@ -166,7 +166,7 @@ ZTEST(weave_message_suite, test_process_all_messages)
 	drain_message_queue(&test_msgq_a);
 
 	/* Ensure method uses queued execution */
-	test_method_simple.module = &test_module_a;
+	test_method_simple.queue = &test_msgq_a;
 
 	/* Queue multiple method calls - they should queue since module has a queue */
 	for (i = 0; i < 3; i++) {
@@ -185,7 +185,7 @@ ZTEST(weave_message_suite, test_process_all_messages)
 	}
 
 	/* Process all queued messages */
-	int processed = weave_process_all_messages(&test_module_a);
+	int processed = weave_process_all_messages(&test_msgq_a);
 
 	/* We should have processed at least some messages */
 	zassert_true(processed >= 0, "Process should return non-negative count");
@@ -208,7 +208,7 @@ ZTEST(weave_message_suite, test_process_all_empty_queue)
 	drain_message_queue(&test_msgq_a);
 
 	/* Process empty queue */
-	processed = weave_process_all_messages(&test_module_a);
+	processed = weave_process_all_messages(&test_msgq_a);
 	zassert_equal(processed, 0, "Should process 0 messages from empty queue");
 }
 
@@ -218,7 +218,7 @@ ZTEST(weave_message_suite, test_process_all_null_queue)
 	int processed;
 
 	/* Process with module that has no queue */
-	processed = weave_process_all_messages(&test_module_no_queue);
+	processed = weave_process_all_messages(NULL);
 	zassert_equal(processed, 0, "Should return 0 for module with no queue");
 
 	/* Process with NULL module */
