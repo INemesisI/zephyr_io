@@ -388,10 +388,69 @@ ZTEST(test_advanced, test_type_validation)
 	zassert_equal(size, 4, "U32 should be 4 bytes");
 }
 
+/**
+ * @brief Test that register mappings are sorted by address
+ *
+ * This test verifies that the linker-based sorting mechanism works correctly.
+ * The REG_MAP_SORTED_NAME macro should result in iterable sections being
+ * sorted by address automatically.
+ *
+ * IMPORTANT: All addresses in the test use consistent hex notation (0xNNNN).
+ * Mixing hex and decimal would break sorting due to lexicographic ordering.
+ */
+ZTEST(test_advanced, test_register_sorting)
+{
+	uint16_t prev_addr = 0;
+	int count = 0;
+	bool first = true;
+
+	/* Callback to verify sorting */
+	int verify_sorted_cb(const struct reg_mapping *map, void *user_data)
+	{
+		bool *is_sorted = (bool *)user_data;
+
+		if (!first) {
+			if (map->address <= prev_addr) {
+				TC_PRINT("ERROR: Register 0x%04x comes after 0x%04x but should be "
+					 "sorted!\n",
+					 map->address, prev_addr);
+				TC_PRINT("  This can happen if addresses use inconsistent "
+					 "notation\n");
+				TC_PRINT("  (mixing hex like 0x1000 with decimal like 4096)\n");
+				*is_sorted = false;
+				return 1; /* Stop iteration */
+			}
+
+			/* Also verify addresses are properly spaced for testing */
+			if (count < 10 && (map->address - prev_addr) < 2) {
+				TC_PRINT("WARNING: Addresses 0x%04x and 0x%04x are very close\n",
+					 prev_addr, map->address);
+			}
+		}
+
+		prev_addr = map->address;
+		first = false;
+		count++;
+		return 0;
+	}
+
+	bool is_sorted = true;
+	reg_foreach(verify_sorted_cb, &is_sorted);
+
+	zassert_true(is_sorted, "Register mappings must be sorted by address");
+	zassert_true(count > 0, "Should have at least some registers to verify sorting");
+
+	TC_PRINT("Verified %d registers are sorted by address (all using hex notation)\n", count);
+
+	/* Note: If this test fails, check that all register addresses use the same notation.
+	 * Either use all hex (0xNNNN) or all decimal (NNNNN), but don't mix them!
+	 */
+}
+
 #ifdef CONFIG_REGISTER_MAPPER_VALIDATION
 
-/* External function declaration - not in public header but available for testing */
-extern int reg_validate_no_overlaps(void);
+/* External function declaration - internal function available for testing */
+extern int _reg_validate_no_overlaps(void);
 
 /* Channel for overlapping register test */
 REGISTER_CHAN_DEFINE(
@@ -429,7 +488,7 @@ ZTEST(test_advanced, test_overlap_detection)
 	 * - reg1 (0x7000-0x7003) overlaps with reg2 (0x7002-0x7003)
 	 * - reg3 (0x7006-0x7009) overlaps with reg4 (0x7009-0x700C)
 	 */
-	ret = reg_validate_no_overlaps();
+	ret = _reg_validate_no_overlaps();
 	zassert_equal(ret, -EINVAL, "Overlapping registers should fail validation");
 }
 

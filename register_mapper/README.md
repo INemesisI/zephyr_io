@@ -7,12 +7,15 @@ A compile-time register mapping framework for Zephyr RTOS that bridges external 
 
 ## 🚀 Features
 
+- **O(log n) Binary Search**: Automatic sorting via linker for fast register lookup
 - **Type-Safe Mapping**: Compile-time validation ensures register types match channel field sizes
 - **Zero-Copy Access**: Direct read/write to ZBUS message buffers without intermediate copies
 - **Protocol Agnostic**: Works with any register-based protocol (Modbus, SPI, I2C, UART)
 - **Atomic Transactions**: Block write support for consistent multi-register updates
 - **Event-Driven**: Automatic ZBUS notifications trigger observers on register changes
 - **Permission Control**: Per-register read/write access flags for security
+
+**Note**: Binary search requires consistent address notation (all hex or all decimal)
 
 ## 📋 Quick Start
 
@@ -26,6 +29,7 @@ A compile-time register mapping framework for Zephyr RTOS that bridges external 
 
 ```c
 #include <zephyr_io/register_mapper/register_mapper.h>
+#include <zephyr_io/register_mapper/register_channel.h>
 #include <zephyr/zbus/zbus.h>
 
 // Define configuration structure
@@ -36,13 +40,13 @@ struct sensor_config {
     uint8_t  mode;
 } __packed;
 
-// Create ZBUS channel
-ZBUS_CHAN_DEFINE(sensor_config_chan, struct sensor_config,
-                 NULL, NULL, ZBUS_OBSERVERS_EMPTY,
-                 ZBUS_MSG_INIT(.sample_rate = 100,
-                              .filter_cutoff = 50,
-                              .gain = 1,
-                              .mode = 0));
+// Create ZBUS channel with automatic state tracking for block writes
+REGISTER_CHAN_DEFINE(sensor_config_chan, struct sensor_config,
+                     NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+                     (ZBUS_MSG_INIT(.sample_rate = 100,
+                                   .filter_cutoff = 50,
+                                   .gain = 1,
+                                   .mode = 0)));
 
 // Map registers to channel fields with compile-time validation
 REG_MAPPING_DEFINE(reg_sample_rate, 0x1000, &sensor_config_chan,
@@ -93,9 +97,9 @@ ZBUS_CHAN_ADD_OBS(sensor_config_chan, config_listener, 1);
 int ret = reg_block_write_begin(K_MSEC(100));
 if (ret == 0) {
     // Update multiple registers without triggering notifications
-    REG_WRITE_U16(0x1000, 500);   // Sample rate
-    REG_WRITE_U16(0x1002, 100);   // Filter cutoff
-    REG_WRITE_U8(0x1004, 10);     // Gain
+    reg_block_write_register(0x1000, REG_VALUE_U16(500));  // Sample rate
+    reg_block_write_register(0x1002, REG_VALUE_U16(100));  // Filter cutoff
+    reg_block_write_register(0x1004, REG_VALUE_U8(10));    // Gain
 
     // Commit - sends single notification with all changes
     reg_block_write_commit(K_MSEC(100));
@@ -105,10 +109,15 @@ if (ret == 0) {
 ### Sample Application
 
 See `register_mapper/samples/device_config/` for a complete example demonstrating:
-- Sensor and motor modules with ZBUS channels
-- Register mappings for external configuration
-- UART command handler for register access
-- Automatic notifications on configuration changes
+- Sensor module with separate status, config, and command channels
+- Motor module with combined config/status channel
+- Register mappings organized by address ranges:
+  - 0x1000-0x1FFF: Status registers (read-only)
+  - 0x2000-0x2FFF: Configuration registers (read-write)
+  - 0x3000-0x3FFF: Data registers (read-only)
+  - 0x4000-0x4FFF: Command registers (write-only)
+- UART command handler simulating external protocol access
+- Automatic ZBUS notifications on configuration changes
 
 ```
 Architecture:
@@ -127,18 +136,25 @@ Architecture:
 ## 🛠️ Building and Testing
 
 ```bash
-# Run all tests
+# Run all tests using the test script (RECOMMENDED)
+./scripts/run_register_mapper_tests.sh
+
+# Or manually with Twister
 ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
-  west twister \
+PYTHON_PREFER=$PWD/.venv/bin/python3 CMAKE_PREFIX_PATH=$PWD/.venv \
+  .venv/bin/python zephyr/scripts/twister \
   -T register_mapper/tests -p native_sim -v -O twister-out --no-clean
 
 # Build sample application
 ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
-  west build -p always -b native_sim -d build_sample \
+  .venv/bin/west build -p always -b native_sim -d build_sample \
   register_mapper/samples/device_config
 
 # Run sample
 ./build_sample/zephyr/zephyr.exe
+
+# Generate coverage report
+./scripts/generate_coverage_register_mapper.sh
 ```
 
 ## 📖 Documentation

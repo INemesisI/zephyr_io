@@ -53,12 +53,23 @@ struct reg_mapping {
 };
 
 /**
+ * @brief Encode address in variable name for automatic linker sorting
+ *
+ * The linker sorts sections by name, enabling O(log n) binary search.
+ * LIMITATION: Requires consistent address notation (all hex or all decimal).
+ * Recommended: Use hex (0x0000-0xFFFF) throughout your project.
+ */
+#define REG_MAP_SORTED_NAME(_addr, _name) CONCAT(CONCAT(regmap_, _addr), CONCAT(_, _name))
+
+/**
  * @brief Define a register mapping (unsafe variant)
  *
  * This macro creates a register mapping in the iterable section without
  * compile-time validation. Use REG_MAPPING_DEFINE for the safe version.
  * When CONFIG_REGISTER_MAPPER_NAMES is enabled, the variable name is used
  * as the human-readable register name.
+ *
+ * The mapping is automatically sorted by address due to the naming convention.
  *
  * @param _name Mapping variable name (also used as register name if names enabled)
  * @param _addr Register address
@@ -69,33 +80,36 @@ struct reg_mapping {
  */
 #ifdef CONFIG_REGISTER_MAPPER_NAMES
 #define REG_MAPPING_DEFINE_UNSAFE(_name, _addr, _chan, _off, _typ, _flg)                           \
-	static STRUCT_SECTION_ITERABLE(reg_mapping, _name) = {.address = _addr,                    \
-							      .channel = _chan,                    \
-							      .offset = _off,                      \
-							      .type = _typ,                        \
-							      .flags = _flg,                       \
-							      .name = STRINGIFY(_name) }
+	static STRUCT_SECTION_ITERABLE(reg_mapping, REG_MAP_SORTED_NAME(_addr, _name)) = {         \
+		.address = _addr,                                                                  \
+		.channel = _chan,                                                                  \
+		.offset = _off,                                                                    \
+		.type = _typ,                                                                      \
+		.flags = _flg,                                                                     \
+		.name = STRINGIFY(_name) }
 #else
 #define REG_MAPPING_DEFINE_UNSAFE(_name, _addr, _chan, _off, _typ, _flg)                           \
-	static STRUCT_SECTION_ITERABLE(reg_mapping, _name) = {                                     \
+	static STRUCT_SECTION_ITERABLE(reg_mapping, REG_MAP_SORTED_NAME(_addr, _name)) = {         \
 		.address = _addr, .channel = _chan, .offset = _off, .type = _typ, .flags = _flg}
 #endif
 
 /**
  * @brief Define a register mapping with compile-time validation
  *
- * This macro creates a register mapping with validation that the field
- * exists and the type size matches.
- * When CONFIG_REGISTER_MAPPER_NAMES is enabled, the variable name is used
- * as the human-readable register name.
+ * Creates a register mapping with automatic sorting for O(log n) lookup.
  *
- * @param _name Mapping variable name (also used as register name if names enabled)
- * @param _addr Register address
+ * IMPORTANT: Use consistent address notation throughout your project:
+ * - Recommended: hex (0x0100, 0x1000, 0x2000)
+ * - Alternative: decimal (256, 4096, 8192)
+ * Mixing formats breaks sorting and binary search!
+ *
+ * @param _name Mapping variable name
+ * @param _addr Register address (16-bit, use consistent notation)
  * @param _chan Pointer to ZBUS channel
  * @param _msg_type Message type of the ZBUS channel
  * @param _field Field name in channel message structure
- * @param _typ Register type
- * @param _flg Register flags
+ * @param _typ Register type (REG_TYPE_*)
+ * @param _flg Register flags (REG_FLAGS_*)
  */
 #define REG_MAPPING_DEFINE(_name, _addr, _chan, _msg_type, _field, _typ, _flg)                     \
 	/* Verify field exists in structure */                                                     \
@@ -103,6 +117,8 @@ struct reg_mapping {
 	/* Verify register type size matches field size */                                         \
 	BUILD_ASSERT(sizeof(((_msg_type *)0)->_field) == REG_TYPE_SIZE_CONST(_typ),                \
 		     "Register type size mismatch for field '" #_field "'");                       \
+	/* Verify address is in valid range for 16-bit addresses */                                \
+	BUILD_ASSERT((_addr) <= 0xFFFF, "Register address exceeds 16-bit range");                  \
 	/* Create the mapping */                                                                   \
 	REG_MAPPING_DEFINE_UNSAFE(_name, _addr, _chan, offsetof(_msg_type, _field), _typ, _flg)
 

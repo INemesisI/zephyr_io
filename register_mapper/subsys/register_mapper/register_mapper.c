@@ -16,14 +16,36 @@
 
 LOG_MODULE_REGISTER(register_mapper, CONFIG_REGISTER_MAPPER_LOG_LEVEL);
 
-/* Helper function to find register mapping by address */
-static const struct reg_mapping *find_register(uint16_t addr)
+/* Binary search implementation for sorted register mappings
+ * The linker automatically sorts the section by name, so we get O(log n) lookup
+ */
+static const struct reg_mapping *_find_register(uint16_t addr)
 {
-	STRUCT_SECTION_FOREACH(reg_mapping, map) {
-		if (map->address == addr) {
-			return map;
+	/* Get the section boundaries */
+	extern struct reg_mapping _reg_mapping_list_start[];
+	extern struct reg_mapping _reg_mapping_list_end[];
+	const struct reg_mapping *start = _reg_mapping_list_start;
+	const struct reg_mapping *end = _reg_mapping_list_end;
+
+	if (start >= end) {
+		return NULL;
+	}
+
+	/* Binary search on pre-sorted section */
+	while (start < end) {
+		const struct reg_mapping *mid = start + (end - start) / 2;
+
+		if (mid->address == addr) {
+			return mid;
+		}
+
+		if (mid->address < addr) {
+			start = mid + 1;
+		} else {
+			end = mid;
 		}
 	}
+
 	return NULL;
 }
 
@@ -51,7 +73,7 @@ int reg_read_value(uint16_t addr, struct reg_value *value)
 		return -EINVAL;
 	}
 
-	const struct reg_mapping *map = find_register(addr);
+	const struct reg_mapping *map = _find_register(addr);
 	if (!map) {
 		LOG_WRN("Register 0x%04x not found", addr);
 		return -ENOENT;
@@ -92,9 +114,10 @@ int reg_read_value(uint16_t addr, struct reg_value *value)
 }
 
 /* Common write implementation - used by both reg_write_value and reg_block_write_register */
-static int reg_write_common(uint16_t addr, struct reg_value value, bool notify, k_timeout_t timeout)
+static int _reg_write_common(uint16_t addr, struct reg_value value, bool notify,
+			     k_timeout_t timeout)
 {
-	const struct reg_mapping *map = find_register(addr);
+	const struct reg_mapping *map = _find_register(addr);
 	if (!map) {
 		LOG_WRN("Register 0x%04x not found", addr);
 		return -EINVAL;
@@ -156,7 +179,7 @@ static int reg_write_common(uint16_t addr, struct reg_value value, bool notify, 
 /* Core register write implementation with immediate notification */
 int reg_write_value(uint16_t addr, struct reg_value value, k_timeout_t timeout)
 {
-	return reg_write_common(addr, value, true, timeout);
+	return _reg_write_common(addr, value, true, timeout);
 }
 
 #ifdef CONFIG_REGISTER_MAPPER_BLOCK_WRITE
@@ -179,7 +202,7 @@ int reg_block_write_begin(k_timeout_t timeout)
 /* Write a register within a block transaction (no notification) */
 int reg_block_write_register(uint16_t addr, struct reg_value value)
 {
-	return reg_write_common(addr, value, false, K_NO_WAIT);
+	return _reg_write_common(addr, value, false, K_NO_WAIT);
 }
 
 /* Commit pending notifications */
@@ -230,8 +253,8 @@ int reg_block_write_commit(k_timeout_t timeout)
 
 #ifdef CONFIG_REGISTER_MAPPER_VALIDATION
 
-/* Validate that no registers overlap */
-int reg_validate_no_overlaps(void)
+/* Validate that no registers overlap - internal function also used by tests */
+int _reg_validate_no_overlaps(void)
 {
 	int overlap_count = 0;
 
@@ -311,7 +334,7 @@ int reg_foreach(reg_foreach_cb_t cb, void *user_data)
 static int register_mapper_init(void)
 {
 	/* Validate no overlapping registers */
-	if (reg_validate_no_overlaps() != 0) {
+	if (_reg_validate_no_overlaps() != 0) {
 		LOG_ERR("Register mapper initialization failed - overlapping registers!");
 		return -EINVAL;
 	}

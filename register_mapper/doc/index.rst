@@ -167,6 +167,7 @@ Channels represent the internal data structures accessed via registers:
 
     #include <zephyr/zbus/zbus.h>
     #include <zephyr_io/register_mapper/register_mapper.h>
+    #include <zephyr_io/register_mapper/register_channel.h>
 
     /* Configuration structure */
     struct motor_config {
@@ -184,29 +185,22 @@ Channels represent the internal data structures accessed via registers:
         uint8_t  fault_flags;      /* Error bits */
     } __packed;
 
-    /* Define channels */
-    ZBUS_CHAN_DEFINE(motor_config_chan, struct motor_config,
-                     NULL, NULL, ZBUS_OBSERVERS_EMPTY,
-                     ZBUS_MSG_INIT(.target_speed = 0,
-                                  .acceleration = 100,
-                                  .direction = 0,
-                                  .enable = 0));
+    /* Define channels using REGISTER_CHAN_DEFINE for automatic state tracking */
+    /* This macro automatically manages channel_state for block write support */
+    REGISTER_CHAN_DEFINE(motor_config_chan, struct motor_config,
+                        NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+                        (ZBUS_MSG_INIT(.target_speed = 0,
+                                      .acceleration = 100,
+                                      .direction = 0,
+                                      .enable = 0)));
 
-    ZBUS_CHAN_DEFINE(motor_status_chan, struct motor_status,
-                     NULL, NULL, ZBUS_OBSERVERS_EMPTY,
-                     ZBUS_MSG_INIT(0));
+    REGISTER_CHAN_DEFINE(motor_status_chan, struct motor_status,
+                        NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+                        (ZBUS_MSG_INIT(0)));
 
-    /* For block writes, attach state tracking */
-    static struct channel_state config_state = {0};
-    static struct channel_state status_state = {0};
-
-    static int attach_channel_state(void)
-    {
-        motor_config_chan.user_data = &config_state;
-        motor_status_chan.user_data = &status_state;
-        return 0;
-    }
-    SYS_INIT(attach_channel_state, APPLICATION, 90);
+    /* Note: REGISTER_CHAN_DEFINE automatically creates and attaches
+     * channel_state structures for block write transaction support.
+     * No manual state attachment is needed. */
 
 Creating Register Mappings
 ==========================
@@ -286,12 +280,16 @@ Register Access Operations
         }
     }
 
-    /* Type-specific helper macros */
+    /* Read specific types - extract from reg_value */
     uint16_t speed;
-    REG_READ_U16(0x1000, &speed);
+    if (reg_read_value(0x1000, &value) == 0 && value.type == REG_TYPE_U16) {
+        speed = value.val.u16;
+    }
 
     uint8_t temp;
-    REG_READ_U8(0x2000, &temp);
+    if (reg_read_value(0x2000, &value) == 0 && value.type == REG_TYPE_U8) {
+        temp = value.val.u8;
+    }
 
 **Writing Registers**:
 
@@ -303,10 +301,12 @@ Register Access Operations
     value.val.u16 = 1500;
     int ret = reg_write_value(0x1000, value, K_MSEC(100));
 
-    /* Type-specific helper macros */
-    REG_WRITE_U16(0x1000, 1500);
-    REG_WRITE_U8(0x1004, 128);
-    REG_WRITE_U32(0x2000, 0x12345678);
+    /* Type-specific value creation using helper macros */
+    /* REG_VALUE_* macros create properly typed reg_value structs */
+    reg_write_value(0x1000, REG_VALUE_U16(1500), K_MSEC(100));
+    reg_write_value(0x1004, REG_VALUE_U8(128), K_MSEC(100));
+    reg_write_value(0x2000, REG_VALUE_U32(0x12345678), K_MSEC(100));
+    reg_write_value(0x3000, REG_VALUE_I16(-100), K_MSEC(100));
 
 Block Write Transactions
 ========================
@@ -322,10 +322,10 @@ Block writes enable atomic updates of multiple registers with deferred notificat
     }
 
     /* Update multiple registers without notifications */
-    REG_WRITE_U16(0x1000, 3000);     /* Target speed */
-    REG_WRITE_U16(0x1002, 500);      /* Acceleration */
-    REG_WRITE_U8(0x1004, 1);         /* Direction */
-    REG_WRITE_U8(0x1005, 1);         /* Enable */
+    reg_block_write_register(0x1000, REG_VALUE_U16(3000));  /* Target speed */
+    reg_block_write_register(0x1002, REG_VALUE_U16(500));   /* Acceleration */
+    reg_block_write_register(0x1004, REG_VALUE_U8(1));      /* Direction */
+    reg_block_write_register(0x1005, REG_VALUE_U8(1));      /* Enable */
 
     /* Commit - releases mutex and sends notifications */
     ret = reg_block_write_commit(K_MSEC(100));
@@ -335,6 +335,16 @@ Block writes enable atomic updates of multiple registers with deferred notificat
 .. note::
    Block writes are essential for maintaining consistency when multiple
    related registers must change together (e.g., PID controller parameters).
+
+.. warning::
+   **Binary Search Optimization Requirement**
+
+   The O(log n) lookup requires consistent address notation:
+
+   - Use **all hex** (0x0100, 0x1000, 0x2000) - recommended
+   - Or use **all decimal** (256, 4096, 8192)
+
+   Mixing notations (0x1000 and 4096) breaks sorting due to lexicographic ordering.
 
 Advanced Usage
 ==============
