@@ -324,6 +324,42 @@ int weave_call_method(struct weave_method_port *port, const void *request, size_
 		      void *reply, size_t reply_size, k_timeout_t timeout);
 
 /**
+ * @brief Check if a method will execute immediately (in caller's context)
+ *
+ * @param method Method to check
+ * @return true if method executes immediately, false if queued
+ */
+static inline bool weave_method_is_immediate(const struct weave_method *method)
+{
+	return method && method->module && !method->module->request_queue;
+}
+
+/**
+ * @brief Check if a method will be queued for deferred execution
+ *
+ * @param method Method to check
+ * @return true if method will be queued, false if immediate
+ */
+static inline bool weave_method_is_queued(const struct weave_method *method)
+{
+	return method && method->module && method->module->request_queue != NULL;
+}
+
+/**
+ * @brief Check if a method port will queue its calls
+ *
+ * @param port Method port to check
+ * @return true if calls through this port will be queued, false if immediate
+ */
+static inline bool weave_port_will_queue(const struct weave_method_port *port)
+{
+	if (!port || !port->target_method) {
+		return false;
+	}
+	return weave_method_is_queued(port->target_method);
+}
+
+/**
  * @brief Emit a signal to all handlers
  *
  * Can be called from ISR context when using K_NO_WAIT

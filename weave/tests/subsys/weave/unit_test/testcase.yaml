@@ -1,0 +1,16 @@
+tests:
+  weave.unit_test:
+    tags: weave unit_test
+    integration_platforms:
+      - native_sim
+      - qemu_cortex_m3
+    harness: ztest
+  weave.unit_test.large_heap:
+    tags: weave unit_test large_heap
+    integration_platforms:
+      - native_sim
+      - qemu_cortex_m3
+    harness: ztest
+    extra_configs:
+      - CONFIG_WEAVE_DATA_HEAP_SIZE=8192
+      - CONFIG_WEAVE_MAX_PENDING_REQUESTS=32

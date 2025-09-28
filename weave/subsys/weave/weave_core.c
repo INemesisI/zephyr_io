@@ -283,6 +283,19 @@ int weave_call_method(struct weave_method_port *port, const void *request, size_
 		return -EINVAL;
 	}
 
+	/* Validate port sizes match method sizes */
+	if (port->request_size != method->request_size) {
+		LOG_ERR("Port request size mismatch: port expects %zu, method expects %zu",
+			port->request_size, method->request_size);
+		return -EINVAL;
+	}
+
+	if (port->reply_size != method->reply_size) {
+		LOG_ERR("Port reply size mismatch: port expects %zu, method expects %zu",
+			port->reply_size, method->reply_size);
+		return -EINVAL;
+	}
+
 	/* Validate request size - must be at least as large as expected */
 	if (request_size < port->request_size) {
 		LOG_ERR("Request buffer too small: provided %zu, need at least %zu", request_size,
