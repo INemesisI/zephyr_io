@@ -8,6 +8,6 @@ target_sources(app PRIVATE
     src/main.c
     src/sensors.c
     src/processor.c
-    src/network.c
+    src/echo.c
     src/validator.c
 )

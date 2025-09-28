@@ -5,122 +5,109 @@
  */
 
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/net/buf.h>
 #include <zephyr_io/flow/flow.h>
-#include <zephyr/logging/log.h>
 
+#include "sensors.h" /* For SOURCE_ID_SENSOR1/2 */
 #include "validator.h"
-#include "packet_defs.h"
 
 LOG_MODULE_REGISTER(validator, LOG_LEVEL_INF);
 
-/* Handler for validation */
+/* Forward declaration of handler function */
 static void validator_handler(struct flow_sink *sink, struct net_buf *buf);
 
-/* Define validator sink with immediate execution */
-FLOW_SINK_DEFINE_IMMEDIATE(validator_sink, validator_handler);
+/* Define routed validator sinks with immediate execution - filter by packet ID
+ */
+FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(validator1_sink, validator_handler,
+                                  SOURCE_ID_SENSOR1, NULL);
+FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(validator2_sink, validator_handler,
+                                  SOURCE_ID_SENSOR2, NULL);
 
-/* Statistics tracking */
-static uint32_t packets_validated;
-static uint32_t packets_failed;
-static uint32_t last_sequence = UINT32_MAX; /* Global sequence tracking */
+/* Validator context with per-sensor statistics */
+struct validator_ctx {
+  uint8_t sensor_id;
+  const char *name;
+  uint32_t validated;
+  uint32_t failed;
+  bool first_packet;
+  uint8_t expected_pattern;
+  size_t expected_size;
+  struct flow_sink *expected_sink; /* To verify correct sink is called */
+};
 
-static bool validate_packet_integrity(struct net_buf *buf)
-{
-	struct packet_header *header = (struct packet_header *)buf->data;
-	size_t total_len = net_buf_frags_len(buf);
-	size_t expected_len = sizeof(struct packet_header) + header->content_length;
+/* Context for each validator */
+static struct validator_ctx sensor1_ctx = {
+    .sensor_id = SOURCE_ID_SENSOR1,
+    .name = "SENSOR1",
+    .first_packet = true,
+    .expected_pattern = 0xA1, /* Sensor 1 sends all 0xA1 */
+    .expected_size = 256,
+    .expected_sink = &validator1_sink};
 
-	/* Check size integrity */
-	if (total_len != expected_len) {
-		LOG_ERR("Size mismatch! Total=%d, Expected=%d (hdr=%d + content=%d)", total_len,
-			expected_len, sizeof(struct packet_header), header->content_length);
-		return false;
-	}
+static struct validator_ctx sensor2_ctx = {
+    .sensor_id = SOURCE_ID_SENSOR2,
+    .name = "SENSOR2",
+    .first_packet = true,
+    .expected_pattern = 0xB2, /* Sensor 2 sends all 0xB2 */
+    .expected_size = 384,
+    .expected_sink = &validator2_sink};
 
-	/* Validate source ID */
-	if (header->source_id != SOURCE_ID_SENSOR1 && header->source_id != SOURCE_ID_SENSOR2) {
-		LOG_ERR("Invalid source ID: %d", header->source_id);
-		return false;
-	}
-
-	/* Validate packet type */
-	if (header->packet_type != PACKET_TYPE_DATA && header->packet_type != PACKET_TYPE_CONTROL) {
-		LOG_ERR("Invalid packet type: 0x%02x", header->packet_type);
-		return false;
-	}
-
-	/* Check sequence number progression (global sequence from processor) */
-	if (last_sequence != UINT32_MAX) {
-		uint32_t expected_seq = last_sequence + 1;
-		if (header->sequence != expected_seq) {
-			LOG_WRN("Sequence gap detected! Expected %d, Got %d (Source %d)",
-				expected_seq, header->sequence, header->source_id);
-		}
-	}
-	last_sequence = header->sequence;
-
-	/* Validate content (check for expected patterns) */
-	/* Content is in the chained buffer after the header */
-	if (buf->frags) {
-		/* The content starts in the second buffer of the chain */
-		uint8_t first_byte = buf->frags->data[0];
-		uint8_t expected = (header->source_id == SOURCE_ID_SENSOR1) ? 0xA0 : 0xB0;
-		if (first_byte != expected) {
-			LOG_ERR("Content validation failed! Source %d: Expected 0x%02x, Got 0x%02x",
-				header->source_id, expected, first_byte);
-			return false;
-		}
-	}
-
-	LOG_DBG("Packet validated: Source %d, Seq %d, Type 0x%02x, %d bytes", header->source_id,
-		header->sequence, header->packet_type, total_len);
-
-	return true;
+/* Now update the sinks to use the contexts */
+static void __attribute__((constructor)) init_sink_contexts(void) {
+  validator1_sink.user_data = &sensor1_ctx;
+  validator2_sink.user_data = &sensor2_ctx;
 }
 
-static void validator_handler(struct flow_sink *sink, struct net_buf *buf)
-{
-	struct packet_header *header;
-	static bool first_packet = true;
-	static uint32_t packets_received = 0;
+/* Common validation handler */
+static void validator_handler(struct flow_sink *sink, struct net_buf *buf) {
+  struct validator_ctx *ctx = (struct validator_ctx *)sink->user_data;
+  size_t data_len = net_buf_frags_len(buf);
 
-	packets_received++;
+  /* Verify correct sink is being called */
+  if (sink != ctx->expected_sink) {
+    LOG_ERR("%s: Wrong sink called! Expected %p, got %p", ctx->name,
+            ctx->expected_sink, sink);
+    return;
+  }
 
-	if (first_packet) {
-		LOG_INF("Packet validator started (immediate mode)");
-		first_packet = false;
-	}
+  /* Log startup message on first packet (required for test harness) */
+  if (ctx->first_packet) {
+    LOG_INF("Sensor %d validator started (immediate mode, filtering ID=0x%02x)",
+            ctx->sensor_id, ctx->sensor_id);
+    ctx->first_packet = false;
+  }
 
-	/* Check if buffer has enough data for header */
-	if (buf->len < sizeof(struct packet_header)) {
-		LOG_ERR("Buffer too small for header: %d bytes", buf->len);
-		packets_failed++;
-		/* Buffer unref handled by framework */
-		return;
-	}
+  /* Validate packet size and content */
+  bool valid = true;
 
-	header = (struct packet_header *)buf->data;
+  /* Check size first */
+  if (data_len != ctx->expected_size) {
+    LOG_ERR("%s: Size mismatch: Expected %zu, Got %zu", ctx->name,
+            ctx->expected_size, data_len);
+    valid = false;
+  }
 
-	/* Validate packet */
-	if (validate_packet_integrity(buf)) {
-		packets_validated++;
-		LOG_INF("VALID: Sensor %d, Seq %d, Type 0x%02x [Total valid: %d]",
-			header->source_id, header->sequence, header->packet_type,
-			packets_validated);
-	} else {
-		packets_failed++;
-		LOG_ERR("INVALID: Sensor %d, Seq %d [Total failed: %d]", header->source_id,
-			header->sequence, packets_failed);
-	}
+  /* Check payload content - verify all bytes match the pattern */
+  for (size_t i = 0; i < buf->len; i++) {
+    if (buf->data[i] != ctx->expected_pattern) {
+      LOG_ERR("%s: Wrong byte at %zu: Expected 0x%02x, Got 0x%02x", ctx->name,
+              i, ctx->expected_pattern, buf->data[i]);
+      valid = false;
+      break;
+    }
+  }
 
-	/* Report statistics with every packet */
-	uint32_t total = packets_validated + packets_failed;
-	uint32_t rate = (total > 0) ? (packets_validated * 100) / total : 0;
-	LOG_INF("Validator: Checked %d packets - Valid=%d, Failed=%d, Success rate=%d%%", total,
-		packets_validated, packets_failed, rate);
-
-	/* Buffer unref handled by framework */
+  /* Update statistics and log result */
+  if (valid) {
+    ctx->validated++;
+    LOG_INF("%s VALID: %zu bytes [Total: %d valid, %d failed]", ctx->name,
+            data_len, ctx->validated, ctx->failed);
+  } else {
+    ctx->failed++;
+    LOG_ERR("%s INVALID: %zu bytes [Total: %d valid, %d failed]", ctx->name,
+            data_len, ctx->validated, ctx->failed);
+  }
 }
 
 /* No thread needed for immediate handler - executes in source context */

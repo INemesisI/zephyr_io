@@ -14,11 +14,12 @@ tests:
       ordered: false
       regex:
         - "Sensor module started \\(256B \\+ 384B payloads\\)"
-        - "TCP network transmitter started"
-        - "Packet validator started \\(immediate mode\\)"
+        - "Echo server started"
+        - "Sensor 1 validator started \\(immediate mode, filtering ID=0x01\\)"
+        - "Sensor 2 validator started \\(immediate mode, filtering ID=0x02\\)"
         - "Packet processor started"
-        - "TCP Stats: [0-9]+ packets, [0-9]+ bytes, [0-9]+ B/s"
-        - "Validator: Checked [0-9]+ packets - Valid=[0-9]+, Failed=[0-9]+, Success rate=[0-9]+%"
+        - "SENSOR1 VALID: [0-9]+ bytes"
+        - "SENSOR2 VALID: [0-9]+ bytes"
     timeout: 5
     min_ram: 32
     integration_platforms:
