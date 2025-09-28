@@ -6,7 +6,7 @@ The repository includes automated coverage testing via GitHub Actions.
 
 ### What it does:
 - Runs on every push to main/develop and on all PRs
-- Tests only the `swift_io/subsys/swift_io/` module source code
+- Tests only the `flow/subsys/flow/` module source code
 - Generates coverage reports (XML and HTML)
 - Comments on PRs with coverage metrics
 - Enforces 90% minimum line coverage

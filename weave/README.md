@@ -3,7 +3,7 @@
 [![Zephyr Version](https://img.shields.io/badge/zephyr-v3.7.1-blue)](https://github.com/zephyrproject-rtos/zephyr)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-Weave is a lightweight, D-Bus-inspired message passing framework for Zephyr RTOS. Unlike SwiftIO which focuses on many-to-many event streaming, Weave enables structured communication between modules using **method calls** and **signals**, making it ideal for configuration management, status queries, command execution, and distributed notifications.
+Weave is a lightweight, D-Bus-inspired message passing framework for Zephyr RTOS. Unlike Flow which focuses on many-to-many event streaming, Weave enables structured communication between modules using **method calls** and **signals**, making it ideal for configuration management, status queries, command execution, and distributed notifications.
 
 ## 🚀 Features
 
@@ -162,9 +162,9 @@ Module architecture:
         └<─on_temp_changed─────┘
 ```
 
-## 📊 Comparison with SwiftIO
+## 📊 Comparison with Flow
 
-| Aspect | SwiftIO | Weave |
+| Aspect | Flow | Weave |
 |--------|---------|-------|
 | **Pattern** | Many-to-many streaming | Method calls and signals |
 | **Direction** | Unidirectional | Bidirectional for methods |
@@ -210,13 +210,13 @@ ZEPHYR_EXTRA_MODULES=$PWD/weave \
 - **[Sample Code](weave/samples/)**: Working examples of common patterns
 - **[Test Suite](weave/tests/)**: Comprehensive unit and integration tests
 
-## 🤝 Integration with SwiftIO
+## 🤝 Integration with Flow
 
-Weave and SwiftIO complement each other for complete communication coverage:
+Weave and Flow complement each other for complete communication coverage:
 
 ```c
-// High-throughput data streaming via SwiftIO
-swift_io_source_send(&sensor_data, buffer, K_NO_WAIT);
+// High-throughput data streaming via Flow
+flow_source_send(&sensor_data, buffer, K_NO_WAIT);
 
 // Control and configuration via Weave
 struct set_config_request cfg = {.sample_rate = 1000};

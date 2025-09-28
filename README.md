@@ -7,9 +7,9 @@ A collection of high-performance, thread-safe communication and I/O modules for 
 
 ## 🔧 Modules
 
-### [SwiftIO](swift_io/) - Source-sink Wired Interface for Fast Threaded I/O
+### [Flow](flow/) - Fast Lightweight Object Wiring
 
-SwiftIO is a high-performance, zero-copy packet distribution framework based on the **source/sink pattern**. Sources (producers) send `net_buf` packets to multiple sinks (consumers) without data copying, using reference counting for efficient many-to-many communication.
+Flow is a high-performance, zero-copy packet distribution framework based on the **source/sink pattern**. Sources (producers) send `net_buf` packets to multiple sinks (consumers) without data copying, using reference counting for efficient many-to-many communication.
 
 **Key Features:**
 - **Many-to-Many Routing**: Sources can send to multiple sinks, sinks can receive from multiple sources
@@ -55,9 +55,9 @@ west update
 # Activate virtual environment
 source zephyr/.venv/bin/activate
 
-# Run swift_io tests and samples
-ZEPHYR_EXTRA_MODULES=$PWD/swift_io \
-  west twister -T swift_io -p native_sim -v -O twister-out --no-clean
+# Run flow tests and samples
+ZEPHYR_EXTRA_MODULES=$PWD/flow \
+  west twister -T flow -p native_sim -v -O twister-out --no-clean
 
 # Run register_mapper tests
 ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
@@ -70,9 +70,9 @@ ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
 # Activate virtual environment
 source zephyr/.venv/bin/activate
 
-# Generate coverage for swift_io
-ZEPHYR_EXTRA_MODULES=$PWD/swift_io \
-  west twister --coverage -p native_sim -T swift_io -v -O twister-coverage --no-clean
+# Generate coverage for flow
+ZEPHYR_EXTRA_MODULES=$PWD/flow \
+  west twister --coverage -p native_sim -T flow -v -O twister-coverage --no-clean
 
 # Generate coverage for register_mapper
 ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \

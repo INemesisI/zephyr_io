@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - 'swift_io/**'
+      - 'flow/**'
       - '.github/workflows/coverage.yml'
       - '.github/actions/setup-zephyr-modules/**'
   push:
@@ -14,7 +14,7 @@ on:
       - main
       - develop
     paths:
-      - 'swift_io/**'
+      - 'flow/**'
       - '.github/workflows/coverage.yml'
       - '.github/actions/setup-zephyr-modules/**'
   workflow_dispatch:
@@ -54,21 +54,21 @@ jobs:
         shell: bash
         run: |
           cd zephyr_io/..
-          ./zephyr_io/scripts/generate_swift_io_coverage.sh
+          ./zephyr_io/scripts/generate_flow_coverage.sh
 
       - name: Generate coverage report
         shell: bash
         run: |
           cd twister-combined-coverage
-          # Only analyze swift_io module source code (not tests, samples, or other modules)
-          gcovr --filter=".*swift_io/subsys/swift_io/.*" \
+          # Only analyze flow module source code (not tests, samples, or other modules)
+          gcovr --filter=".*flow/subsys/flow/.*" \
                 --xml coverage.xml \
                 --html-details coverage.html \
                 --print-summary .
           cd ..
 
-          # Also generate text summary for PR comment (swift_io module only)
-          gcovr --filter=".*swift_io/subsys/swift_io/.*" \
+          # Also generate text summary for PR comment (flow module only)
+          gcovr --filter=".*flow/subsys/flow/.*" \
                 --print-summary twister-combined-coverage > coverage-summary.txt
 
       - name: Upload Coverage Artifacts
@@ -103,7 +103,7 @@ jobs:
             // Choose emoji based on line coverage
             const emoji = lineCov >= 95 ? '🟢' : lineCov >= 90 ? '🟡' : '🔴';
 
-            const comment = `## ${emoji} swift_io Module Coverage
+            const comment = `## ${emoji} flow Module Coverage
 
             | Metric | Coverage |
             |--------|----------|
@@ -111,7 +111,7 @@ jobs:
             | **Functions** | ${funcCov.toFixed(1)}% |
             | **Branches** | ${branchCov.toFixed(1)}% |
 
-            > Coverage for \`swift_io/subsys/swift_io/\` only
+            > Coverage for \`flow/subsys/flow/\` only
             > Minimum threshold: 90%`;
 
             // Find existing comment or create new one
@@ -123,7 +123,7 @@ jobs:
 
             const botComment = comments.find(comment =>
               comment.user.type === 'Bot' &&
-              comment.body.includes('swift_io Module Coverage')
+              comment.body.includes('flow Module Coverage')
             );
 
             if (botComment) {
@@ -146,16 +146,16 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          # Extract coverage percentage for swift_io module only
-          LINE_COV=$(gcovr --filter=".*swift_io/subsys/swift_io/.*" --print-summary twister-combined-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
+          # Extract coverage percentage for flow module only
+          LINE_COV=$(gcovr --filter=".*flow/subsys/flow/.*" --print-summary twister-combined-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
 
-          # Set minimum coverage threshold for swift_io module
+          # Set minimum coverage threshold for flow module
           MIN_COVERAGE=90
 
           # Compare coverage with threshold
           if (( $(echo "$LINE_COV < $MIN_COVERAGE" | bc -l) )); then
-            echo "❌ Coverage check failed for swift_io module: $LINE_COV% is below minimum threshold of $MIN_COVERAGE%"
+            echo "❌ Coverage check failed for flow module: $LINE_COV% is below minimum threshold of $MIN_COVERAGE%"
             exit 1
           else
-            echo "✅ Coverage check passed for swift_io module: $LINE_COV% meets minimum threshold of $MIN_COVERAGE%"
+            echo "✅ Coverage check passed for flow module: $LINE_COV% meets minimum threshold of $MIN_COVERAGE%"
           fi

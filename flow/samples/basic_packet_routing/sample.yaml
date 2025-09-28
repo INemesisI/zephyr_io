@@ -1,0 +1,29 @@
+sample:
+  description: Modular packet processing pipeline with header addition, TCP transmission, and integrity validation
+  name: Packet I/O Basic Routing Sample
+tests:
+  sample.flow.basic_routing:
+    tags:
+      - flow
+      - samples
+      - networking
+      - validation
+    harness: console
+    harness_config:
+      type: multi_line
+      ordered: false
+      regex:
+        - "Sensor module started \\(256B \\+ 384B payloads\\)"
+        - "TCP network transmitter started"
+        - "Packet validator started \\(immediate mode\\)"
+        - "Packet processor started"
+        - "TCP Stats: [0-9]+ packets, [0-9]+ bytes, [0-9]+ B/s"
+        - "Validator: Checked [0-9]+ packets - Valid=[0-9]+, Failed=[0-9]+, Success rate=[0-9]+%"
+    timeout: 5
+    min_ram: 32
+    integration_platforms:
+      - native_sim
+    platform_allow:
+      - native_sim
+      - qemu_x86
+      - qemu_cortex_m3

@@ -1,0 +1,18 @@
+tests:
+  flow.samples.router_tcp:
+    tags:
+      - flow
+      - samples
+      - tcp
+      - router
+      - pytest
+    harness: pytest
+    harness_config:
+      pytest_root:
+        - "tests/test_router_tcp.py"
+    # No overlay needed - board configs are automatically selected
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim
+    timeout: 60

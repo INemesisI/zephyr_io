@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-
-rsource "subsys/swift_io/Kconfig"
-rsource "subsys/swift_router/Kconfig"
