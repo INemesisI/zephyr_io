@@ -18,7 +18,7 @@ repos:
     hooks:
       - id: run-flow-tests
         name: Run Flow Tests
-        entry: ./scripts/run_flow_tests.sh
+        entry: ./scripts/run_tests.sh flow
         language: system
         pass_filenames: false
         files: '^flow/.*'
@@ -28,9 +28,19 @@ repos:
       # Run weave tests before commit (only when weave/ files change)
       - id: run-weave-tests
         name: Run Weave Tests
-        entry: ./scripts/run_weave_tests.sh
+        entry: ./scripts/run_tests.sh weave
         language: system
         pass_filenames: false
         files: '^weave/.*'
+        stages: [commit]
+        verbose: true
+
+      # Run register_mapper tests before commit (only when register_mapper/ files change)
+      - id: run-register-mapper-tests
+        name: Run Register Mapper Tests
+        entry: ./scripts/run_tests.sh register_mapper
+        language: system
+        pass_filenames: false
+        files: '^register_mapper/.*'
         stages: [commit]
         verbose: true

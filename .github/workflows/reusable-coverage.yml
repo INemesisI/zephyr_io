@@ -1,28 +1,31 @@
-name: SwiftIO Coverage
+name: Reusable Coverage Workflow
 
-# Run coverage on PRs, pushes to main/develop, and can be triggered manually
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'flow/**'
-      - '.github/workflows/coverage.yml'
-      - '.github/actions/setup-zephyr-modules/**'
-  push:
-    branches:
-      - main
-      - develop
-    paths:
-      - 'flow/**'
-      - '.github/workflows/coverage.yml'
-      - '.github/actions/setup-zephyr-modules/**'
-  workflow_dispatch:
-
-# Cancel ongoing runs for PRs
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+  workflow_call:
+    inputs:
+      module-name:
+        required: true
+        type: string
+        description: 'Name of the module to analyze (e.g., flow, weave, register_mapper)'
+      module-display-name:
+        required: true
+        type: string
+        description: 'Display name for the module in UI (e.g., "Flow", "Weave", "Register Mapper")'
+      coverage-threshold:
+        required: false
+        type: number
+        default: 80
+        description: 'Minimum line coverage percentage required'
+      coverage-options:
+        required: false
+        type: string
+        default: ''
+        description: 'Additional options to pass to the coverage script'
+      zephyr-version:
+        required: false
+        type: string
+        default: 'v3.7.1'
+        description: 'Zephyr version to use'
 
 # Grant permissions for the workflow
 permissions:
@@ -32,7 +35,7 @@ permissions:
 
 jobs:
   coverage:
-    name: Generate Packet I/O Coverage Report
+    name: Generate ${{ inputs.module-display-name }} Coverage Report
     runs-on: ubuntu-latest
     container:
       image: zephyrprojectrtos/ci:v0.26.18
@@ -46,7 +49,7 @@ jobs:
       - name: Setup Complete Zephyr Modules Environment
         uses: ./.github/actions/setup-zephyr-modules
         with:
-          zephyr-version: 'v3.7.1'
+          zephyr-version: ${{ inputs.zephyr-version }}
           setup-python-env: 'true'  # This container needs Python setup
           install-coverage-tools: 'true'
 
@@ -54,32 +57,32 @@ jobs:
         shell: bash
         run: |
           cd zephyr_io/..
-          ./zephyr_io/scripts/generate_flow_coverage.sh
+          ./zephyr_io/scripts/generate_coverage.sh ${{ inputs.module-name }} ${{ inputs.coverage-options }}
 
       - name: Generate coverage report
         shell: bash
         run: |
-          cd twister-combined-coverage
-          # Only analyze flow module source code (not tests, samples, or other modules)
-          gcovr --filter=".*flow/subsys/flow/.*" \
+          cd twister-coverage-${{ inputs.module-name }}
+          # Only analyze module source code (not tests, samples, or other modules)
+          gcovr --filter=".*${{ inputs.module-name }}/subsys/.*" \
                 --xml coverage.xml \
                 --html-details coverage.html \
                 --print-summary .
           cd ..
 
-          # Also generate text summary for PR comment (flow module only)
-          gcovr --filter=".*flow/subsys/flow/.*" \
-                --print-summary twister-combined-coverage > coverage-summary.txt
+          # Also generate text summary for PR comment
+          gcovr --filter=".*${{ inputs.module-name }}/subsys/.*" \
+                --print-summary twister-coverage-${{ inputs.module-name }} > coverage-summary.txt
 
       - name: Upload Coverage Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Coverage Report
+          name: ${{ inputs.module-display-name }} Coverage Report
           if-no-files-found: ignore
           path: |
-            twister-combined-coverage/coverage.html
-            twister-combined-coverage/coverage.xml
+            twister-coverage-${{ inputs.module-name }}/coverage.html
+            twister-coverage-${{ inputs.module-name }}/coverage.xml
             coverage-summary.txt
 
       - name: Comment PR with Coverage
@@ -101,9 +104,11 @@ jobs:
             const branchCov = branchMatch ? parseFloat(branchMatch[1]) : 0;
 
             // Choose emoji based on line coverage
-            const emoji = lineCov >= 95 ? '🟢' : lineCov >= 90 ? '🟡' : '🔴';
+            const threshold = ${{ inputs.coverage-threshold }};
+            const emoji = lineCov >= threshold ? '🟢' :
+                         lineCov >= (threshold - 10) ? '🟡' : '🔴';
 
-            const comment = `## ${emoji} flow Module Coverage
+            const comment = `## ${emoji} ${{ inputs.module-display-name }} Module Coverage
 
             | Metric | Coverage |
             |--------|----------|
@@ -111,8 +116,8 @@ jobs:
             | **Functions** | ${funcCov.toFixed(1)}% |
             | **Branches** | ${branchCov.toFixed(1)}% |
 
-            > Coverage for \`flow/subsys/flow/\` only
-            > Minimum threshold: 90%`;
+            > Coverage for \`${{ inputs.module-name }}/subsys/\` only
+            > Minimum threshold: ${threshold}%`;
 
             // Find existing comment or create new one
             const { data: comments } = await github.rest.issues.listComments({
@@ -123,7 +128,7 @@ jobs:
 
             const botComment = comments.find(comment =>
               comment.user.type === 'Bot' &&
-              comment.body.includes('flow Module Coverage')
+              comment.body.includes('${{ inputs.module-display-name }} Module Coverage')
             );
 
             if (botComment) {
@@ -146,16 +151,16 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          # Extract coverage percentage for flow module only
-          LINE_COV=$(gcovr --filter=".*flow/subsys/flow/.*" --print-summary twister-combined-coverage | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
+          # Extract coverage percentage for module
+          LINE_COV=$(gcovr --filter=".*${{ inputs.module-name }}/subsys/.*" --print-summary twister-coverage-${{ inputs.module-name }} | grep "lines:" | sed 's/.*lines: \([0-9.]*\)%.*/\1/')
 
-          # Set minimum coverage threshold for flow module
-          MIN_COVERAGE=90
+          # Set minimum coverage threshold
+          MIN_COVERAGE=${{ inputs.coverage-threshold }}
 
           # Compare coverage with threshold
           if (( $(echo "$LINE_COV < $MIN_COVERAGE" | bc -l) )); then
-            echo "❌ Coverage check failed for flow module: $LINE_COV% is below minimum threshold of $MIN_COVERAGE%"
+            echo "❌ Coverage check failed for ${{ inputs.module-display-name }} module: $LINE_COV% is below minimum threshold of $MIN_COVERAGE%"
             exit 1
           else
-            echo "✅ Coverage check passed for flow module: $LINE_COV% meets minimum threshold of $MIN_COVERAGE%"
+            echo "✅ Coverage check passed for ${{ inputs.module-display-name }} module: $LINE_COV% meets minimum threshold of $MIN_COVERAGE%"
           fi

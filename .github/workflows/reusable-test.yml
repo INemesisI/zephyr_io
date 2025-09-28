@@ -1,27 +1,26 @@
-name: SwiftIO Tests
+name: Reusable Test Workflow
 
-# Run tests on PRs, pushes to main, and can be triggered manually
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'flow/**'
-      - '.github/workflows/flow_tests.yml'
-      - '.github/actions/setup-zephyr-modules/**'
-  push:
-    branches:
-      - main
-    paths:
-      - 'flow/**'
-      - '.github/workflows/flow_tests.yml'
-      - '.github/actions/setup-zephyr-modules/**'
-  workflow_dispatch:
-
-# Cancel ongoing runs for PRs
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+  workflow_call:
+    inputs:
+      module-name:
+        required: true
+        type: string
+        description: 'Name of the module to test (e.g., flow, weave, register_mapper)'
+      module-display-name:
+        required: true
+        type: string
+        description: 'Display name for the module in UI (e.g., "Flow", "Weave", "Register Mapper")'
+      test-options:
+        required: false
+        type: string
+        default: ''
+        description: 'Additional options to pass to the test script'
+      zephyr-version:
+        required: false
+        type: string
+        default: 'v3.7.1'
+        description: 'Zephyr version to use'
 
 # Grant permissions for the workflow
 permissions:
@@ -30,8 +29,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  flow_tests:
-    name: Run SwiftIO Tests
+  test:
+    name: Run ${{ inputs.module-display-name }} Tests
     runs-on: ubuntu-latest
     container:
       image: zephyrprojectrtos/ci:v0.26.18
@@ -45,21 +44,21 @@ jobs:
       - name: Setup Complete Zephyr Modules Environment
         uses: ./.github/actions/setup-zephyr-modules
         with:
-          zephyr-version: 'v3.7.1'
+          zephyr-version: ${{ inputs.zephyr-version }}
           setup-python-env: 'true'  # This container needs Python setup
           install-coverage-tools: 'false'
 
-      - name: Run SwiftIO Tests
+      - name: Run ${{ inputs.module-display-name }} Tests
         shell: bash
         run: |
           cd zephyr_io/..
-          ./zephyr_io/scripts/run_flow_tests.sh
+          ./zephyr_io/scripts/run_tests.sh ${{ inputs.module-name }} ${{ inputs.test-options }}
 
       - name: Upload Test Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SwiftIO Test Results
+          name: ${{ inputs.module-display-name }} Test Results
           if-no-files-found: ignore
           path: |
             twister-out/twister.xml
@@ -69,6 +68,6 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
-          check_name: Packet I/O Test Results
+          check_name: ${{ inputs.module-display-name }} Test Results
           files: "**/twister.xml"
           comment_mode: off

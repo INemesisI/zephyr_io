@@ -137,7 +137,7 @@ Architecture:
 
 ```bash
 # Run all tests using the test script (RECOMMENDED)
-./scripts/run_register_mapper_tests.sh
+./scripts/run_tests.sh register_mapper
 
 # Or manually with Twister
 ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
@@ -154,7 +154,7 @@ ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
 ./build_sample/zephyr/zephyr.exe
 
 # Generate coverage report
-./scripts/generate_coverage_register_mapper.sh
+./scripts/generate_coverage.sh register_mapper
 ```
 
 ## 📖 Documentation

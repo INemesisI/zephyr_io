@@ -388,6 +388,44 @@ ZTEST(test_advanced, test_type_validation)
 	zassert_equal(size, 4, "U32 should be 4 bytes");
 }
 
+/* Context for register sorting verification */
+struct sort_verify_context {
+	uint16_t prev_addr;
+	int count;
+	bool first;
+	bool is_sorted;
+};
+
+/* Callback to verify sorting - defined outside test function to avoid nested function */
+static int verify_sorted_cb_for_test(const struct reg_mapping *map, void *user_data)
+{
+	struct sort_verify_context *ctx = (struct sort_verify_context *)user_data;
+
+	if (!ctx->first) {
+		if (map->address <= ctx->prev_addr) {
+			TC_PRINT("ERROR: Register 0x%04x comes after 0x%04x but should be "
+				 "sorted!\n",
+				 map->address, ctx->prev_addr);
+			TC_PRINT("  This can happen if addresses use inconsistent "
+				 "notation\n");
+			TC_PRINT("  (mixing hex like 0x1000 with decimal like 4096)\n");
+			ctx->is_sorted = false;
+			return 1; /* Stop iteration */
+		}
+
+		/* Also verify addresses are properly spaced for testing */
+		if (ctx->count < 10 && (map->address - ctx->prev_addr) < 2) {
+			TC_PRINT("WARNING: Addresses 0x%04x and 0x%04x are very close\n",
+				 ctx->prev_addr, map->address);
+		}
+	}
+
+	ctx->prev_addr = map->address;
+	ctx->first = false;
+	ctx->count++;
+	return 0;
+}
+
 /**
  * @brief Test that register mappings are sorted by address
  *
@@ -400,47 +438,17 @@ ZTEST(test_advanced, test_type_validation)
  */
 ZTEST(test_advanced, test_register_sorting)
 {
-	uint16_t prev_addr = 0;
-	int count = 0;
-	bool first = true;
+	struct sort_verify_context ctx = {
+		.prev_addr = 0, .count = 0, .first = true, .is_sorted = true};
 
-	/* Callback to verify sorting */
-	int verify_sorted_cb(const struct reg_mapping *map, void *user_data)
-	{
-		bool *is_sorted = (bool *)user_data;
+	/* Use the external callback function */
+	reg_foreach(verify_sorted_cb_for_test, &ctx);
 
-		if (!first) {
-			if (map->address <= prev_addr) {
-				TC_PRINT("ERROR: Register 0x%04x comes after 0x%04x but should be "
-					 "sorted!\n",
-					 map->address, prev_addr);
-				TC_PRINT("  This can happen if addresses use inconsistent "
-					 "notation\n");
-				TC_PRINT("  (mixing hex like 0x1000 with decimal like 4096)\n");
-				*is_sorted = false;
-				return 1; /* Stop iteration */
-			}
+	zassert_true(ctx.is_sorted, "Register mappings must be sorted by address");
+	zassert_true(ctx.count > 0, "Should have at least some registers to verify sorting");
 
-			/* Also verify addresses are properly spaced for testing */
-			if (count < 10 && (map->address - prev_addr) < 2) {
-				TC_PRINT("WARNING: Addresses 0x%04x and 0x%04x are very close\n",
-					 prev_addr, map->address);
-			}
-		}
-
-		prev_addr = map->address;
-		first = false;
-		count++;
-		return 0;
-	}
-
-	bool is_sorted = true;
-	reg_foreach(verify_sorted_cb, &is_sorted);
-
-	zassert_true(is_sorted, "Register mappings must be sorted by address");
-	zassert_true(count > 0, "Should have at least some registers to verify sorting");
-
-	TC_PRINT("Verified %d registers are sorted by address (all using hex notation)\n", count);
+	TC_PRINT("Verified %d registers are sorted by address (all using hex notation)\n",
+		 ctx.count);
 
 	/* Note: If this test fails, check that all register addresses use the same notation.
 	 * Either use all hex (0xNNNN) or all decimal (NNNNN), but don't mix them!
@@ -493,3 +501,8 @@ ZTEST(test_advanced, test_overlap_detection)
 }
 
 #endif /* CONFIG_REGISTER_MAPPER_VALIDATION */
+
+/* Mark the stack as non-executable for security */
+#if defined(__GNUC__)
+__asm__(".section .note.GNU-stack,\"\",@progbits");
+#endif
