@@ -39,27 +39,28 @@ FLOW_CONNECT(&echo_source, &processor_inbound_sink);
 FLOW_CONNECT(&processor_inbound_source, &validator1_sink);
 FLOW_CONNECT(&processor_inbound_source, &validator2_sink);
 
-int main(void) {
-  LOG_INF("Packet I/O Routing Sample with Echo Server");
-  LOG_INF("===========================================");
-  LOG_INF("Demonstrating packet routing with ID-based filtering:");
-  LOG_INF("  1. Sensors generate packets with unique IDs");
-  LOG_INF("  2. Processor adds headers and forwards to echo server");
-  LOG_INF("  3. Echo server sends packets back");
-  LOG_INF("  4. Processor routes echoed packets to validators");
-  LOG_INF("  5. Validators filter packets by sensor ID");
-  LOG_INF("");
-  LOG_INF("Module threads start automatically:");
-  LOG_INF("  - Sensors: Generate test packets with IDs");
-  LOG_INF("  - Processor: Add headers and route packets");
-  LOG_INF("  - Echo: Echo server");
-  LOG_INF("  - Validators: Per-sensor packet validation");
+int main(void)
+{
+	LOG_INF("Packet I/O Routing Sample with Echo Server");
+	LOG_INF("===========================================");
+	LOG_INF("Demonstrating packet routing with ID-based filtering:");
+	LOG_INF("  1. Sensors generate packets with unique IDs");
+	LOG_INF("  2. Processor adds headers and forwards to echo server");
+	LOG_INF("  3. Echo server sends packets back");
+	LOG_INF("  4. Processor routes echoed packets to validators");
+	LOG_INF("  5. Validators filter packets by sensor ID");
+	LOG_INF("");
+	LOG_INF("Module threads start automatically:");
+	LOG_INF("  - Sensors: Generate test packets with IDs");
+	LOG_INF("  - Processor: Add headers and route packets");
+	LOG_INF("  - Echo: Echo server");
+	LOG_INF("  - Validators: Per-sensor packet validation");
 
-  /* All threads start automatically via K_THREAD_DEFINE */
-  /* Main thread can just sleep */
-  while (1) {
-    k_sleep(K_FOREVER);
-  }
+	/* All threads start automatically via K_THREAD_DEFINE */
+	/* Main thread can just sleep */
+	while (1) {
+		k_sleep(K_FOREVER);
+	}
 
-  return 0;
+	return 0;
 }

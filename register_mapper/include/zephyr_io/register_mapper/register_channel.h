@@ -15,8 +15,8 @@
 #ifndef ZEPHYR_INCLUDE_REGISTER_CHANNEL_H_
 #define ZEPHYR_INCLUDE_REGISTER_CHANNEL_H_
 
-#include <zephyr/zbus/zbus.h>
 #include <stdbool.h>
+#include <zephyr/zbus/zbus.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,7 +39,8 @@ struct channel_state {
  * @param _name Channel variable name
  * @param _type Channel message type
  * @param _validator Channel validator (can be NULL)
- * @param _user_data User data (MUST be NULL or &_name##_state for register mapper)
+ * @param _user_data User data (MUST be NULL or &_name##_state for register
+ * mapper)
  * @param _observers Channel observers
  * @param _init_val Initial message value
  */

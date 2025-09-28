@@ -12,16 +12,13 @@
 
 LOG_MODULE_REGISTER(sensor_module, LOG_LEVEL_INF);
 
-REGISTER_CHAN_DEFINE(sensor_status_chan, struct sensor_status, NULL, NULL,
-		     ZBUS_OBSERVERS_EMPTY,
+REGISTER_CHAN_DEFINE(sensor_status_chan, struct sensor_status, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		     (ZBUS_MSG_INIT(.status = SENSOR_STATUS_READY, .data = 0)));
 
-REGISTER_CHAN_DEFINE(sensor_config_chan, struct sensor_config, NULL, NULL,
-		     ZBUS_OBSERVERS_EMPTY,
+REGISTER_CHAN_DEFINE(sensor_config_chan, struct sensor_config, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		     (ZBUS_MSG_INIT(.threshold = 2048, .reserved = 0)));
 
-REGISTER_CHAN_DEFINE(sensor_command_chan, struct sensor_command, NULL, NULL,
-		     ZBUS_OBSERVERS_EMPTY,
+REGISTER_CHAN_DEFINE(sensor_command_chan, struct sensor_command, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		     (ZBUS_MSG_INIT(.control = 0, .reserved = {0})));
 
 ZBUS_SUBSCRIBER_DEFINE(sensor_subscriber, 8);

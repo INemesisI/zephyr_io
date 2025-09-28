@@ -19,7 +19,6 @@ K_MEM_SLAB_DEFINE(message_slab, sizeof(struct weave_message_context),
 /* Heap for variable-sized data buffers */
 K_HEAP_DEFINE(weave_data_heap, CONFIG_WEAVE_DATA_HEAP_SIZE);
 
-
 /**
  * @brief Free a message context and its allocated buffers
  */
@@ -67,7 +66,7 @@ static bool weave_context_put(struct weave_message_context *ctx)
  * @return Allocated context or NULL on failure
  */
 static struct weave_message_context *weave_create_message_context(enum weave_msg_type msg_type,
-								   int refcount)
+								  int refcount)
 {
 	struct weave_message_context *ctx;
 
@@ -100,7 +99,7 @@ static struct weave_message_context *weave_create_message_context(enum weave_msg
  * @return 0 on success, -ENOMEM on failure
  */
 static int weave_setup_request_buffer(struct weave_message_context *ctx, const void *data,
-				     size_t size)
+				      size_t size)
 {
 	if (!ctx) {
 		return -EINVAL;
@@ -153,7 +152,7 @@ static int weave_setup_reply_buffer(struct weave_message_context *ctx, size_t si
  * @return 0 on success, error code on failure
  */
 static int weave_queue_message(struct weave_message_context *ctx, struct k_msgq *queue,
-				k_timeout_t timeout)
+			       k_timeout_t timeout)
 {
 	if (!ctx || !queue) {
 		return -EINVAL;
@@ -186,9 +185,8 @@ static int weave_queue_message(struct weave_message_context *ctx, struct k_msgq 
  * @return 0 on success, negative errno on error, or result from method call
  */
 static int weave_queue_async_message(enum weave_msg_type msg_type, void *handler,
-				     struct k_msgq *queue, const void *data,
-				     size_t data_size, void *reply, size_t reply_size,
-				     k_timeout_t timeout)
+				     struct k_msgq *queue, const void *data, size_t data_size,
+				     void *reply, size_t reply_size, k_timeout_t timeout)
 {
 	struct weave_message_context *ctx;
 	int ret;
@@ -251,8 +249,7 @@ static int weave_queue_async_message(enum weave_msg_type msg_type, void *handler
 
 	/* Copy reply if successful */
 	if (ctx->result == 0 && reply && ctx->message.reply_size > 0) {
-		memcpy(reply, ctx->message.reply_data,
-		       MIN(ctx->message.reply_size, reply_size));
+		memcpy(reply, ctx->message.reply_data, MIN(ctx->message.reply_size, reply_size));
 	}
 
 	/* Save result before releasing our reference */
@@ -314,9 +311,8 @@ int weave_call_method(struct weave_method_port *port, const void *request, size_
 	}
 
 	/* Async call through message queue */
-	return weave_queue_async_message(WEAVE_MSG_REQUEST, method, target->request_queue,
-					  request, port->request_size, reply, port->reply_size,
-					  timeout);
+	return weave_queue_async_message(WEAVE_MSG_REQUEST, method, target->request_queue, request,
+					 port->request_size, reply, port->reply_size, timeout);
 }
 
 /**
@@ -350,9 +346,9 @@ int weave_emit_signal(struct weave_signal *signal, const void *event)
 		}
 
 		/* Queue signal for async processing */
-		int ret = weave_queue_async_message(WEAVE_MSG_SIGNAL, handler, target->request_queue,
-						     event, signal->event_size, NULL, 0,
-						     K_NO_WAIT);
+		int ret =
+			weave_queue_async_message(WEAVE_MSG_SIGNAL, handler, target->request_queue,
+						  event, signal->event_size, NULL, 0, K_NO_WAIT);
 		if (ret == 0) {
 			sent_count++;
 		}

@@ -34,7 +34,6 @@ enum weave_msg_type {
 	WEAVE_MSG_ERROR = 3,
 };
 
-
 /* Forward declarations */
 struct weave_module;
 struct weave_method;
@@ -137,7 +136,6 @@ struct weave_module {
 	/* Message queue for incoming requests (optional) */
 	struct k_msgq *request_queue;
 
-
 	/* Module private data */
 	void *private_data;
 };
@@ -235,11 +233,10 @@ struct weave_signal_connection {
  * @param event_type Event data type (e.g., struct temperature_changed_event)
  */
 #define WEAVE_SIGNAL_DEFINE(signal_name, event_type)                                               \
-	struct weave_signal signal_name = {                                                         \
-		.name = #signal_name,                                                               \
-		.event_size = sizeof(event_type),                                                   \
-		.handlers = SYS_SLIST_STATIC_INIT(&(signal_name.handlers))                         \
-	}
+	struct weave_signal signal_name = {.name = #signal_name,                                   \
+					   .event_size = sizeof(event_type),                       \
+					   .handlers =                                             \
+						   SYS_SLIST_STATIC_INIT(&(signal_name.handlers))}
 
 /**
  * @brief Register a signal handler (slot)
@@ -265,10 +262,10 @@ struct weave_signal_connection {
 	}                                                                                          \
 	/* Handler descriptor for runtime wiring */                                                \
 	struct weave_signal_handler name = {                                                       \
-		{NULL}, /* node */                                                                 \
-		#name, /* name */                                                                   \
+		{NULL},                          /* node */                                        \
+		#name,                           /* name */                                        \
 		_weave_handler_##name##_wrapper, /* handler */                                     \
-		NULL /* module */                                                                   \
+		NULL                             /* module */                                      \
 	}
 
 /**

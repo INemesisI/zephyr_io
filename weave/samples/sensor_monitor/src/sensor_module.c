@@ -40,9 +40,7 @@ static struct sensor_context sensor_ctx = {
 WEAVE_MSGQ_DEFINE(sensor_msgq, 10);
 
 /* Thread automatically started at boot */
-K_THREAD_DEFINE(sensor_thread_id, 2048,
-		sensor_thread, NULL, NULL, NULL,
-		5, 0, 0);
+K_THREAD_DEFINE(sensor_thread_id, 2048, sensor_thread, NULL, NULL, NULL, 5, 0, 0);
 
 /* Define sensor module */
 WEAVE_MODULE_DEFINE(sensor_module, &sensor_msgq);

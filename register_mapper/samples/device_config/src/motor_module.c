@@ -13,8 +13,7 @@
 
 LOG_MODULE_REGISTER(motor_module, LOG_LEVEL_INF);
 
-REGISTER_CHAN_DEFINE(motor_chan, struct motor_config, NULL, NULL,
-		     ZBUS_OBSERVERS_EMPTY,
+REGISTER_CHAN_DEFINE(motor_chan, struct motor_config, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		     (ZBUS_MSG_INIT(.status = MOTOR_STATUS_IDLE, .direction = MOTOR_DIR_FORWARD,
 				    .speed = 0, .acceleration = 100, .current = 0)));
 

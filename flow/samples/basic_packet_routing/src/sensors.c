@@ -24,56 +24,57 @@ FLOW_SOURCE_DEFINE_ROUTED(sensor2_source, SOURCE_ID_SENSOR2);
 static uint8_t sensor1_data[256]; /* 256 byte payload */
 static uint8_t sensor2_data[384]; /* 384 byte payload */
 
-static void init_sensor_data(void) {
-  /* Sensor 1: Repeating pattern 0xA1 throughout */
-  for (int i = 0; i < sizeof(sensor1_data); i++) {
-    sensor1_data[i] = 0xA1;
-  }
+static void init_sensor_data(void)
+{
+	/* Sensor 1: Repeating pattern 0xA1 throughout */
+	for (int i = 0; i < sizeof(sensor1_data); i++) {
+		sensor1_data[i] = 0xA1;
+	}
 
-  /* Sensor 2: Repeating pattern 0xB2 throughout */
-  for (int i = 0; i < sizeof(sensor2_data); i++) {
-    sensor2_data[i] = 0xB2;
-  }
+	/* Sensor 2: Repeating pattern 0xB2 throughout */
+	for (int i = 0; i < sizeof(sensor2_data); i++) {
+		sensor2_data[i] = 0xB2;
+	}
 }
 
-static void sensor_thread_fn(void *p1, void *p2, void *p3) {
-  struct net_buf *buf;
-  int ret;
+static void sensor_thread_fn(void *p1, void *p2, void *p3)
+{
+	struct net_buf *buf;
+	int ret;
 
-  ARG_UNUSED(p1);
-  ARG_UNUSED(p2);
-  ARG_UNUSED(p3);
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 
-  /* Initialize sensor data patterns */
-  init_sensor_data();
+	/* Initialize sensor data patterns */
+	init_sensor_data();
 
-  LOG_INF("Sensor module started (256B + 384B payloads)");
+	LOG_INF("Sensor module started (256B + 384B payloads)");
 
-  while (1) {
-    /* Sensor 1 packet - 256 bytes */
-    buf = net_buf_alloc(&sensor_pool, K_NO_WAIT);
-    if (buf) {
-      net_buf_add_mem(buf, sensor1_data, sizeof(sensor1_data));
-      ret = flow_source_send(&sensor1_source, buf, K_NO_WAIT);
-      LOG_DBG("Sensor 1 sent %d bytes to %d sinks", sizeof(sensor1_data), ret);
-      net_buf_unref(buf);
-    }
+	while (1) {
+		/* Sensor 1 packet - 256 bytes */
+		buf = net_buf_alloc(&sensor_pool, K_NO_WAIT);
+		if (buf) {
+			net_buf_add_mem(buf, sensor1_data, sizeof(sensor1_data));
+			ret = flow_source_send(&sensor1_source, buf, K_NO_WAIT);
+			LOG_DBG("Sensor 1 sent %d bytes to %d sinks", sizeof(sensor1_data), ret);
+			net_buf_unref(buf);
+		}
 
-    for (int i = 0; i < 2; i++) {
-      /* Sensor 2 packet - 384 bytes */
-      buf = net_buf_alloc(&sensor_pool, K_NO_WAIT);
-      if (buf) {
-        net_buf_add_mem(buf, sensor2_data, sizeof(sensor2_data));
-        ret = flow_source_send_consume(&sensor2_source, buf, K_NO_WAIT);
-        LOG_DBG("Sensor 2 sent %d bytes to %d sinks", sizeof(sensor2_data),
-                ret);
-      }
+		for (int i = 0; i < 2; i++) {
+			/* Sensor 2 packet - 384 bytes */
+			buf = net_buf_alloc(&sensor_pool, K_NO_WAIT);
+			if (buf) {
+				net_buf_add_mem(buf, sensor2_data, sizeof(sensor2_data));
+				ret = flow_source_send_consume(&sensor2_source, buf, K_NO_WAIT);
+				LOG_DBG("Sensor 2 sent %d bytes to %d sinks", sizeof(sensor2_data),
+					ret);
+			}
 
-      k_sleep(K_MSEC(500)); /* Faster data rate */
-    }
-  }
+			k_sleep(K_MSEC(500)); /* Faster data rate */
+		}
+	}
 }
 
 /* Static thread initialization - starts automatically */
-K_THREAD_DEFINE(sensor_thread, 1024, sensor_thread_fn, NULL, NULL, NULL, 7, 0,
-                0);
+K_THREAD_DEFINE(sensor_thread, 1024, sensor_thread_fn, NULL, NULL, NULL, 7, 0, 0);

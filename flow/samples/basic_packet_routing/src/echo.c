@@ -31,54 +31,56 @@ static uint32_t packets_echoed;
 static uint32_t bytes_processed;
 static uint32_t first_packet_time;
 
-static void echo_handler(struct flow_sink *sink, struct net_buf *buf) {
-  size_t total_len = net_buf_frags_len(buf);
-  int ret;
+static void echo_handler(struct flow_sink *sink, struct net_buf *buf)
+{
+	size_t total_len = net_buf_frags_len(buf);
+	int ret;
 
-  /* Track first packet time for rate calculation */
-  if (packets_received == 0) {
-    first_packet_time = k_uptime_get_32();
-  }
+	/* Track first packet time for rate calculation */
+	if (packets_received == 0) {
+		first_packet_time = k_uptime_get_32();
+	}
 
-  packets_received++;
-  bytes_processed += total_len;
+	packets_received++;
+	bytes_processed += total_len;
 
-  /* Echo the packet back to the processor */
-  /* The packet ID is already stamped in the buffer by the routed source */
-  ret = flow_source_send(&echo_source, buf, K_NO_WAIT);
-  if (ret > 0) {
-    packets_echoed++;
-  } else {
-    LOG_WRN("ECHO: Failed to send packet back");
-  }
+	/* Echo the packet back to the processor */
+	/* The packet ID is already stamped in the buffer by the routed source */
+	ret = flow_source_send(&echo_source, buf, K_NO_WAIT);
+	if (ret > 0) {
+		packets_echoed++;
+	} else {
+		LOG_WRN("ECHO: Failed to send packet back");
+	}
 
-  /* Log statistics periodically */
-  if (packets_received % 10 == 0) {
-    uint32_t elapsed = k_uptime_get_32() - first_packet_time;
-    if (elapsed > 0) {
-      uint32_t rate = (bytes_processed * 1000) / elapsed;
-      LOG_INF("Echo Stats: RX=%u, Echoed=%u, %u bytes, %u B/s",
-              packets_received, packets_echoed, bytes_processed, rate);
-    }
-  }
+	/* Log statistics periodically */
+	if (packets_received % 10 == 0) {
+		uint32_t elapsed = k_uptime_get_32() - first_packet_time;
+		if (elapsed > 0) {
+			uint32_t rate = (bytes_processed * 1000) / elapsed;
+			LOG_INF("Echo Stats: RX=%u, Echoed=%u, %u bytes, %u B/s", packets_received,
+				packets_echoed, bytes_processed, rate);
+		}
+	}
 
-  /* Buffer unref handled by framework */
+	/* Buffer unref handled by framework */
 }
 
-static void echo_thread_fn(void *p1, void *p2, void *p3) {
-  ARG_UNUSED(p1);
-  ARG_UNUSED(p2);
-  ARG_UNUSED(p3);
+static void echo_thread_fn(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 
-  LOG_INF("Echo server started");
+	LOG_INF("Echo server started");
 
-  while (1) {
-    /* Process events from the echo queue */
-    int ret = flow_event_process(&echo_queue, K_FOREVER);
-    if (ret != 0 && ret != -EAGAIN) {
-      LOG_ERR("Failed to process echo event: %d", ret);
-    }
-  }
+	while (1) {
+		/* Process events from the echo queue */
+		int ret = flow_event_process(&echo_queue, K_FOREVER);
+		if (ret != 0 && ret != -EAGAIN) {
+			LOG_ERR("Failed to process echo event: %d", ret);
+		}
+	}
 }
 
 /* Auto-start echo thread */

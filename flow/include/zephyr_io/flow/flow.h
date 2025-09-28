@@ -56,81 +56,81 @@ typedef void (*flow_handler_t)(struct flow_sink *sink, struct net_buf *buf);
 /** @brief Flow IO source structure */
 struct flow_source {
 #ifdef CONFIG_FLOW_NAMES
-  /** Name of the source */
-  const char *name;
+	/** Name of the source */
+	const char *name;
 #endif
-  /** Packet ID to stamp on outgoing packets (FLOW_PACKET_ID_ANY = don't stamp)
-   */
-  uint16_t packet_id;
-  /** List of connections to sinks */
-  sys_slist_t connections;
-  /** Lock protecting the connection list */
-  struct k_spinlock lock;
+	/** Packet ID to stamp on outgoing packets (FLOW_PACKET_ID_ANY = don't stamp)
+	 */
+	uint16_t packet_id;
+	/** List of connections to sinks */
+	sys_slist_t connections;
+	/** Lock protecting the connection list */
+	struct k_spinlock lock;
 #ifdef CONFIG_FLOW_STATS
-  /** Number of send operations attempted */
-  atomic_t send_count;
-  /** Total number of successful queue operations across all sinks */
-  atomic_t queued_total;
+	/** Number of send operations attempted */
+	atomic_t send_count;
+	/** Total number of successful queue operations across all sinks */
+	atomic_t queued_total;
 #endif
 };
 
 /** @brief Flow IO event for queued delivery */
 struct flow_event {
-  /** Sink that received this packet */
-  struct flow_sink *sink;
-  /** The packet buffer */
-  struct net_buf *buf;
+	/** Sink that received this packet */
+	struct flow_sink *sink;
+	/** The packet buffer */
+	struct net_buf *buf;
 };
 
 /** @brief Flow IO event queue for managing message queues */
 struct flow_event_queue {
-  /** Message queue for packet events */
-  struct k_msgq *msgq;
+	/** Message queue for packet events */
+	struct k_msgq *msgq;
 #ifdef CONFIG_FLOW_NAMES
-  /** Name of the queue */
-  const char *name;
+	/** Name of the queue */
+	const char *name;
 #endif
 #ifdef CONFIG_FLOW_STATS
-  /** Number of events processed */
-  atomic_t processed_count;
+	/** Number of events processed */
+	atomic_t processed_count;
 #endif
 };
 
 /** @brief Flow IO sink structure */
 struct flow_sink {
 #ifdef CONFIG_FLOW_NAMES
-  /** Name of the sink */
-  const char *name;
+	/** Name of the sink */
+	const char *name;
 #endif
-  /** Packet ID to accept (FLOW_PACKET_ID_ANY = accept all) */
-  uint16_t accept_id;
-  /** Execution mode */
-  enum {
-    SINK_MODE_IMMEDIATE, /**< Execute handler immediately in source context */
-    SINK_MODE_QUEUED,    /**< Queue for later processing */
-  } mode;
-  /** Handler function (used for IMMEDIATE and QUEUED modes) */
-  flow_handler_t handler;
-  /** User data passed to handler */
-  void *user_data;
-  /** Message queue for QUEUED mode */
-  struct k_msgq *msgq;
+	/** Packet ID to accept (FLOW_PACKET_ID_ANY = accept all) */
+	uint16_t accept_id;
+	/** Execution mode */
+	enum {
+		SINK_MODE_IMMEDIATE, /**< Execute handler immediately in source context */
+		SINK_MODE_QUEUED,    /**< Queue for later processing */
+	} mode;
+	/** Handler function (used for IMMEDIATE and QUEUED modes) */
+	flow_handler_t handler;
+	/** User data passed to handler */
+	void *user_data;
+	/** Message queue for QUEUED mode */
+	struct k_msgq *msgq;
 #ifdef CONFIG_FLOW_STATS
-  /** Number of packets handled by this sink */
-  atomic_t handled_count;
-  /** Number of packets dropped (queue full) */
-  atomic_t dropped_count;
+	/** Number of packets handled by this sink */
+	atomic_t handled_count;
+	/** Number of packets dropped (queue full) */
+	atomic_t dropped_count;
 #endif
 };
 
 /** @brief Connection between source and sink */
 struct flow_connection {
-  /** Pointer to the source */
-  struct flow_source *source;
-  /** Pointer to the sink */
-  struct flow_sink *sink;
-  /** Node for source's connection list */
-  sys_snode_t node;
+	/** Pointer to the source */
+	struct flow_source *source;
+	/** Pointer to the sink */
+	struct flow_sink *sink;
+	/** Node for source's connection list */
+	sys_snode_t node;
 };
 
 /* Only connections need to be in iterable sections for wiring at init time */
@@ -167,14 +167,14 @@ struct flow_connection {
  * @param _id Packet ID to stamp on outgoing packets (FLOW_PACKET_ID_ANY for no
  * stamping)
  */
-#define FLOW_SOURCE_INITIALIZER(_name, _id)                                    \
-  {                                                                            \
-    IF_ENABLED(CONFIG_FLOW_NAMES, (.name = #_name, ))                          \
-        .packet_id = (_id),                                                    \
-      .connections = SYS_SLIST_STATIC_INIT(&_name.connections), .lock = {},    \
-      IF_ENABLED(CONFIG_FLOW_STATS, (.send_count = ATOMIC_INIT(0),             \
-                                     .queued_total = ATOMIC_INIT(0)))          \
-  }
+#define FLOW_SOURCE_INITIALIZER(_name, _id)                                                        \
+	{                                                                                          \
+		IF_ENABLED(CONFIG_FLOW_NAMES, (.name = #_name, ))                                  \
+			.packet_id = (_id),                                                        \
+		      .connections = SYS_SLIST_STATIC_INIT(&_name.connections), .lock = {},        \
+		      IF_ENABLED(CONFIG_FLOW_STATS,                                                \
+				 (.send_count = ATOMIC_INIT(0), .queued_total = ATOMIC_INIT(0)))   \
+	}
 
 /**
  * @brief Static initializer for packet sinks
@@ -186,15 +186,15 @@ struct flow_connection {
  * @param _user_data User data to pass to handler
  * @param _id Packet ID to accept (FLOW_PACKET_ID_ANY for all)
  */
-#define FLOW_SINK_INITIALIZER(_name, _mode, _handler, _msgq, _user_data, _id)  \
-  {                                                                            \
-    IF_ENABLED(CONFIG_FLOW_NAMES, (.name = #_name, ))                          \
-        .accept_id = (_id),                                                    \
-      .mode = (_mode), .handler = (_handler), .msgq = (_msgq),                 \
-      .user_data = (_user_data),                                               \
-      IF_ENABLED(CONFIG_FLOW_STATS, (.handled_count = ATOMIC_INIT(0),          \
-                                     .dropped_count = ATOMIC_INIT(0)))         \
-  }
+#define FLOW_SINK_INITIALIZER(_name, _mode, _handler, _msgq, _user_data, _id)                      \
+	{                                                                                          \
+		IF_ENABLED(CONFIG_FLOW_NAMES, (.name = #_name, ))                                  \
+			.accept_id = (_id),                                                        \
+		      .mode = (_mode), .handler = (_handler), .msgq = (_msgq),                     \
+		      .user_data = (_user_data),                                                   \
+		      IF_ENABLED(CONFIG_FLOW_STATS, (.handled_count = ATOMIC_INIT(0),              \
+						     .dropped_count = ATOMIC_INIT(0)))             \
+	}
 
 /* ============================ Definition Macros ============================
  */
@@ -209,8 +209,8 @@ struct flow_connection {
  *
  * @param _name Name of the source variable
  */
-#define FLOW_SOURCE_DEFINE(_name)                                              \
-  struct flow_source _name = FLOW_SOURCE_INITIALIZER(_name, FLOW_PACKET_ID_ANY);
+#define FLOW_SOURCE_DEFINE(_name)                                                                  \
+	struct flow_source _name = FLOW_SOURCE_INITIALIZER(_name, FLOW_PACKET_ID_ANY);
 
 /* -------------------- Sink Definitions -------------------- */
 
@@ -224,16 +224,16 @@ struct flow_connection {
  * @param _handler Handler function to call for each packet
  * @param ... Optional user data (defaults to NULL)
  */
-#define FLOW_SINK_DEFINE_IMMEDIATE(...)                                        \
-  UTIL_CAT(Z_FLOW_SINK_IMMEDIATE_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+#define FLOW_SINK_DEFINE_IMMEDIATE(...)                                                            \
+	UTIL_CAT(Z_FLOW_SINK_IMMEDIATE_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
 
-#define Z_FLOW_SINK_IMMEDIATE_2(_name, _handler)                               \
-  struct flow_sink _name = FLOW_SINK_INITIALIZER(                              \
-      _name, SINK_MODE_IMMEDIATE, _handler, NULL, NULL, FLOW_PACKET_ID_ANY)
+#define Z_FLOW_SINK_IMMEDIATE_2(_name, _handler)                                                   \
+	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_IMMEDIATE, _handler, NULL, \
+						       NULL, FLOW_PACKET_ID_ANY)
 
-#define Z_FLOW_SINK_IMMEDIATE_3(_name, _handler, _data)                        \
-  struct flow_sink _name = FLOW_SINK_INITIALIZER(                              \
-      _name, SINK_MODE_IMMEDIATE, _handler, NULL, _data, FLOW_PACKET_ID_ANY)
+#define Z_FLOW_SINK_IMMEDIATE_3(_name, _handler, _data)                                            \
+	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_IMMEDIATE, _handler, NULL, \
+						       _data, FLOW_PACKET_ID_ANY)
 
 /**
  * @brief Define a packet sink with queued execution
@@ -246,18 +246,16 @@ struct flow_connection {
  * @param _queue Pointer to flow_event_queue to use
  * @param ... Optional user data (defaults to NULL)
  */
-#define FLOW_SINK_DEFINE_QUEUED(...)                                           \
-  UTIL_CAT(Z_FLOW_SINK_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+#define FLOW_SINK_DEFINE_QUEUED(...)                                                               \
+	UTIL_CAT(Z_FLOW_SINK_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
 
-#define Z_FLOW_SINK_QUEUED_3(_name, _handler, _queue)                          \
-  struct flow_sink _name =                                                     \
-      FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler,                 \
-                            &(_queue##_msgq), NULL, FLOW_PACKET_ID_ANY)
+#define Z_FLOW_SINK_QUEUED_3(_name, _handler, _queue)                                              \
+	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler,          \
+						       &(_queue##_msgq), NULL, FLOW_PACKET_ID_ANY)
 
-#define Z_FLOW_SINK_QUEUED_4(_name, _handler, _queue, _data)                   \
-  struct flow_sink _name =                                                     \
-      FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler,                 \
-                            &(_queue##_msgq), _data, FLOW_PACKET_ID_ANY)
+#define Z_FLOW_SINK_QUEUED_4(_name, _handler, _queue, _data)                                       \
+	struct flow_sink _name = FLOW_SINK_INITIALIZER(                                            \
+		_name, SINK_MODE_QUEUED, _handler, &(_queue##_msgq), _data, FLOW_PACKET_ID_ANY)
 
 /* -------------------- Routed Source Definitions -------------------- */
 
@@ -269,8 +267,8 @@ struct flow_connection {
  * @param _name Name of the source variable
  * @param _id Packet ID to stamp on outgoing packets
  */
-#define FLOW_SOURCE_DEFINE_ROUTED(_name, _id)                                  \
-  struct flow_source _name = FLOW_SOURCE_INITIALIZER(_name, _id)
+#define FLOW_SOURCE_DEFINE_ROUTED(_name, _id)                                                      \
+	struct flow_source _name = FLOW_SOURCE_INITIALIZER(_name, _id)
 
 /* -------------------- Routed Sink Definitions -------------------- */
 
@@ -284,16 +282,16 @@ struct flow_connection {
  * @param _id Packet ID to accept (or FLOW_PACKET_ID_ANY for all)
  * @param ... Optional user data (defaults to NULL)
  */
-#define FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(...)                                 \
-  UTIL_CAT(Z_FLOW_SINK_ROUTED_IMMEDIATE_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+#define FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(...)                                                     \
+	UTIL_CAT(Z_FLOW_SINK_ROUTED_IMMEDIATE_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
 
-#define Z_FLOW_SINK_ROUTED_IMMEDIATE_3(_name, _handler, _id)                   \
-  struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_IMMEDIATE,   \
-                                                 _handler, NULL, NULL, _id)
+#define Z_FLOW_SINK_ROUTED_IMMEDIATE_3(_name, _handler, _id)                                       \
+	struct flow_sink _name =                                                                   \
+		FLOW_SINK_INITIALIZER(_name, SINK_MODE_IMMEDIATE, _handler, NULL, NULL, _id)
 
-#define Z_FLOW_SINK_ROUTED_IMMEDIATE_4(_name, _handler, _id, _data)            \
-  struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_IMMEDIATE,   \
-                                                 _handler, NULL, _data, _id)
+#define Z_FLOW_SINK_ROUTED_IMMEDIATE_4(_name, _handler, _id, _data)                                \
+	struct flow_sink _name =                                                                   \
+		FLOW_SINK_INITIALIZER(_name, SINK_MODE_IMMEDIATE, _handler, NULL, _data, _id)
 
 /**
  * @brief Define a routed queued sink with packet ID filter
@@ -304,16 +302,16 @@ struct flow_connection {
  * @param _id Packet ID to accept
  * @param ... Optional user data (defaults to NULL)
  */
-#define FLOW_SINK_DEFINE_ROUTED_QUEUED(...)                                    \
-  UTIL_CAT(Z_FLOW_SINK_ROUTED_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+#define FLOW_SINK_DEFINE_ROUTED_QUEUED(...)                                                        \
+	UTIL_CAT(Z_FLOW_SINK_ROUTED_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
 
-#define Z_FLOW_SINK_ROUTED_QUEUED_4(_name, _handler, _queue, _id)              \
-  struct flow_sink _name = FLOW_SINK_INITIALIZER(                              \
-      _name, SINK_MODE_QUEUED, _handler, &(_queue##_msgq), NULL, _id)
+#define Z_FLOW_SINK_ROUTED_QUEUED_4(_name, _handler, _queue, _id)                                  \
+	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler,          \
+						       &(_queue##_msgq), NULL, _id)
 
-#define Z_FLOW_SINK_ROUTED_QUEUED_5(_name, _handler, _queue, _id, _data)       \
-  struct flow_sink _name = FLOW_SINK_INITIALIZER(                              \
-      _name, SINK_MODE_QUEUED, _handler, &(_queue##_msgq), _data, _id)
+#define Z_FLOW_SINK_ROUTED_QUEUED_5(_name, _handler, _queue, _id, _data)                           \
+	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler,          \
+						       &(_queue##_msgq), _data, _id)
 
 /* -------------------- Event Queue Definition -------------------- */
 
@@ -326,12 +324,12 @@ struct flow_connection {
  * @param _name Name of the event queue
  * @param _size Maximum number of events in the queue
  */
-#define FLOW_EVENT_QUEUE_DEFINE(_name, _size)                                  \
-  K_MSGQ_DEFINE(_name##_msgq, sizeof(struct flow_event), _size, 4);            \
-  struct flow_event_queue _name = {                                            \
-      .msgq = &_name##_msgq,                                                   \
-      IF_ENABLED(CONFIG_FLOW_NAMES, (.name = #_name, )) IF_ENABLED(            \
-          CONFIG_FLOW_STATS, (.processed_count = ATOMIC_INIT(0), ))}
+#define FLOW_EVENT_QUEUE_DEFINE(_name, _size)                                                      \
+	K_MSGQ_DEFINE(_name##_msgq, sizeof(struct flow_event), _size, 4);                          \
+	struct flow_event_queue _name = {                                                          \
+		.msgq = &_name##_msgq,                                                             \
+		IF_ENABLED(CONFIG_FLOW_NAMES, (.name = #_name, ))                                  \
+			IF_ENABLED(CONFIG_FLOW_STATS, (.processed_count = ATOMIC_INIT(0), ))}
 
 /* -------------------- Connection Definition -------------------- */
 
@@ -348,12 +346,11 @@ struct flow_connection {
  *   FLOW_CONNECT(&my_source, &my_sink);
  *   FLOW_CONNECT(&router.network_outbound, &tcp_sink);
  */
-#define FLOW_CONNECT(_source_ptr, _sink_ptr)                                   \
-  static STRUCT_SECTION_ITERABLE(flow_connection,                              \
-                                 CONCAT(__connection_, __COUNTER__)) = {       \
-      .source = (_source_ptr),                                                 \
-      .sink = (_sink_ptr),                                                     \
-  }
+#define FLOW_CONNECT(_source_ptr, _sink_ptr)                                                       \
+	static STRUCT_SECTION_ITERABLE(flow_connection, CONCAT(__connection_, __COUNTER__)) = {    \
+		.source = (_source_ptr),                                                           \
+		.sink = (_sink_ptr),                                                               \
+	}
 
 /* ============================ Function APIs ============================ */
 
@@ -375,8 +372,7 @@ struct flow_connection {
  *
  * @return Number of sinks that successfully received the packet
  */
-int flow_source_send(struct flow_source *src, struct net_buf *buf,
-                     k_timeout_t timeout);
+int flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout);
 
 /**
  * @brief Send a packet from source to all connected sinks (consuming reference)
@@ -400,8 +396,7 @@ int flow_source_send(struct flow_source *src, struct net_buf *buf,
  *
  * @return Number of sinks that successfully received the packet
  */
-int flow_source_send_consume(struct flow_source *src, struct net_buf *buf,
-                             k_timeout_t timeout);
+int flow_source_send_consume(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout);
 
 /**
  * @brief Process a single event from a packet event queue
@@ -440,8 +435,7 @@ int flow_event_process(struct flow_event_queue *queue, k_timeout_t timeout);
  *         -ENOBUFS if message queue is full
  *         -ENOTSUP if sink mode is invalid
  */
-int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf,
-                      k_timeout_t timeout);
+int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t timeout);
 
 /**
  * @brief Deliver a packet directly to a sink (consuming reference)
@@ -466,8 +460,7 @@ int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf,
  *         -ENOBUFS if message queue is full
  *         -ENOTSUP if sink mode is invalid
  */
-int flow_sink_deliver_consume(struct flow_sink *sink, struct net_buf *buf,
-                              k_timeout_t timeout);
+int flow_sink_deliver_consume(struct flow_sink *sink, struct net_buf *buf, k_timeout_t timeout);
 
 #ifdef CONFIG_FLOW_RUNTIME_OBSERVERS
 /**
@@ -517,8 +510,7 @@ int flow_connection_remove(struct flow_connection *conn);
  * @param queued_total Output: total successful queue operations across all
  * sinks (can be NULL)
  */
-void flow_source_get_stats(struct flow_source *src, uint32_t *send_count,
-                           uint32_t *queued_total);
+void flow_source_get_stats(struct flow_source *src, uint32_t *send_count, uint32_t *queued_total);
 
 /**
  * @brief Get sink statistics
@@ -529,8 +521,7 @@ void flow_source_get_stats(struct flow_source *src, uint32_t *send_count,
  * @param handled_count Output: number of packets handled (can be NULL)
  * @param dropped_count Output: number of packets dropped (can be NULL)
  */
-void flow_sink_get_stats(struct flow_sink *sink, uint32_t *handled_count,
-                         uint32_t *dropped_count);
+void flow_sink_get_stats(struct flow_sink *sink, uint32_t *handled_count, uint32_t *dropped_count);
 
 /**
  * @brief Reset source statistics
@@ -560,13 +551,14 @@ void flow_sink_reset_stats(struct flow_sink *sink);
  * @param packet_id Packet ID to set
  * @return 0 on success, -ENOBUFS if buffer has insufficient user data space
  */
-static inline int flow_packet_id_set(struct net_buf *buf, uint16_t packet_id) {
-  if (!buf || buf->user_data_size < sizeof(uint16_t)) {
-    return -ENOBUFS;
-  }
-  uint16_t *pkt_id = (uint16_t *)net_buf_user_data(buf);
-  *pkt_id = packet_id;
-  return 0;
+static inline int flow_packet_id_set(struct net_buf *buf, uint16_t packet_id)
+{
+	if (!buf || buf->user_data_size < sizeof(uint16_t)) {
+		return -ENOBUFS;
+	}
+	uint16_t *pkt_id = (uint16_t *)net_buf_user_data(buf);
+	*pkt_id = packet_id;
+	return 0;
 }
 
 /**
@@ -579,17 +571,18 @@ static inline int flow_packet_id_set(struct net_buf *buf, uint16_t packet_id) {
  * @return 0 on success, -ENOBUFS if buffer has insufficient user data space,
  *         -EINVAL if buf or packet_id is NULL
  */
-static inline int flow_packet_id_get(struct net_buf *buf, uint16_t *packet_id) {
-  if (!buf || !packet_id) {
-    return -EINVAL;
-  }
-  if (buf->user_data_size < sizeof(uint16_t)) {
-    *packet_id = FLOW_PACKET_ID_ANY; /* Default to ANY if no space */
-    return -ENOBUFS;
-  }
-  uint16_t *pkt_id = (uint16_t *)net_buf_user_data(buf);
-  *packet_id = *pkt_id;
-  return 0;
+static inline int flow_packet_id_get(struct net_buf *buf, uint16_t *packet_id)
+{
+	if (!buf || !packet_id) {
+		return -EINVAL;
+	}
+	if (buf->user_data_size < sizeof(uint16_t)) {
+		*packet_id = FLOW_PACKET_ID_ANY; /* Default to ANY if no space */
+		return -ENOBUFS;
+	}
+	uint16_t *pkt_id = (uint16_t *)net_buf_user_data(buf);
+	*packet_id = *pkt_id;
+	return 0;
 }
 
 /** @} */
