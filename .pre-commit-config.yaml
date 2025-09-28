@@ -1,0 +1,36 @@
+# Main pre-commit configuration
+
+repos:
+  # Clang-format for changed lines only in C/C++ files (excluding third-party code)
+  - repo: local
+    hooks:
+      - id: clang-format-diff
+        name: clang-format (staged hunks only)
+        entry: bash -c 'git diff --cached | clang-format-diff -p1 -style=file:zephyr/.clang-format -i && git diff --name-only | xargs -r git add'
+        language: system
+        files: '\.(c|h|cpp|hpp|cc|cxx)$'
+        exclude: '^(modules/|bootloader/|zephyr/|tools/)'
+        stages: [commit]
+        pass_filenames: false
+
+  # Run tests before commit
+  - repo: local
+    hooks:
+      - id: run-flow-tests
+        name: Run Flow Tests
+        entry: ./scripts/run_flow_tests.sh
+        language: system
+        pass_filenames: false
+        files: '^flow/.*'
+        stages: [commit]
+        verbose: true
+
+      # Run weave tests before commit (only when weave/ files change)
+      - id: run-weave-tests
+        name: Run Weave Tests
+        entry: ./scripts/run_weave_tests.sh
+        language: system
+        pass_filenames: false
+        files: '^weave/.*'
+        stages: [commit]
+        verbose: true
