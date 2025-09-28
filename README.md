@@ -17,6 +17,16 @@ Flow is a high-performance, zero-copy packet distribution framework based on the
 - **Zero-Copy Distribution**: Efficient packet sharing using `net_buf` reference counting
 - **Protocol Packaging**: Chain buffers to add headers/footers without copying payload data
 
+### [Weave](weave/) - Message Passing Framework
+
+Weave is a lightweight message passing framework that provides structured communication between modules using **method calls** (request/reply) and **signals** (event broadcast). Ideal for control plane operations, configuration management, and event notifications.
+
+**Key Features:**
+- **Method Calls**: Synchronous RPC-style communication with automatic correlation and timeouts
+- **Signal Broadcasting**: Fire-and-forget event notifications to multiple subscribers
+- **Static Memory**: All resources allocated at compile time - no heap usage
+- **Type Safety**: Compile-time type checking for all method and signal connections
+
 ### [Register Mapper](register_mapper/) - Legacy Protocol Bridge
 
 A compile-time register mapping system that bridges external register-based interfaces (UART, Modbus, SPI) with internal ZBUS channels. Maps register addresses to specific fields within ZBUS message structures, enabling legacy protocols to interact seamlessly with modern event-driven architectures.
@@ -52,31 +62,22 @@ west update
 #### Run All Tests
 
 ```bash
-# Activate virtual environment
-source zephyr/.venv/bin/activate
+# Run tests for each module
+./scripts/run_tests.sh flow
+./scripts/run_tests.sh weave
+./scripts/run_tests.sh register_mapper
 
-# Run flow tests and samples
-ZEPHYR_EXTRA_MODULES=$PWD/flow \
-  west twister -T flow -p native_sim -v -O twister-out --no-clean
-
-# Run register_mapper tests
-ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
-  west twister -T register_mapper -p native_sim -v -O twister-out --no-clean
+# Or with verbose output
+./scripts/run_tests.sh flow -v
 ```
 
 #### Code Coverage
 
 ```bash
-# Activate virtual environment
-source zephyr/.venv/bin/activate
-
-# Generate coverage for flow
-ZEPHYR_EXTRA_MODULES=$PWD/flow \
-  west twister --coverage -p native_sim -T flow -v -O twister-coverage --no-clean
-
-# Generate coverage for register_mapper
-ZEPHYR_EXTRA_MODULES=$PWD/register_mapper \
-  west twister --coverage -p native_sim -T register_mapper -v -O twister-coverage --no-clean
+# Generate coverage reports
+./scripts/generate_coverage.sh flow
+./scripts/generate_coverage.sh weave
+./scripts/generate_coverage.sh register_mapper
 ```
 
 ## 🤝 Contributing

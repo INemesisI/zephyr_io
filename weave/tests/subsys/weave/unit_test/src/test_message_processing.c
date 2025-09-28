@@ -12,18 +12,21 @@ LOG_MODULE_REGISTER(test_message_proc, LOG_LEVEL_INF);
 /* Test process request message */
 ZTEST(weave_message_suite, test_process_request_message)
 {
-	struct weave_message msg = {.type = WEAVE_MSG_REQUEST,
-				    .method = &test_method_simple,
-				    .request_data =
-					    &(struct test_request){.value = 0xABCD, .flags = 0},
-				    .reply_data = &(struct test_reply){0},
-				    .request_size = sizeof(struct test_request),
-				    .reply_size = sizeof(struct test_reply),
-				    .completion = NULL,
-				    .result = NULL};
+	/* Test that method calls work correctly.
+	 * We can't call weave_process_message directly with a stack message
+	 * since it expects messages embedded in contexts. Use proper API. */
+	struct test_request req = {.value = 0xABCD, .flags = 0};
+	struct test_reply reply = {0};
 
-	/* Process the message */
-	weave_process_message(&test_module_a, &msg);
+	/* Clear tracker before test */
+	atomic_clear(&tracker_a.call_count);
+
+	/* Call method through proper API */
+	int ret = weave_call_method(&test_port_simple, &req, sizeof(req), &reply, sizeof(reply),
+				    K_MSEC(100));
+
+	/* Should succeed */
+	zassert_equal(ret, 0, "Method call failed: %d", ret);
 
 	/* Verify handler was called */
 	zassert_equal(atomic_get(&tracker_a.call_count), 1, "Handler not called");
@@ -38,21 +41,18 @@ ZTEST(weave_message_suite, test_signal_method_separation)
 	 * They should NOT be mixed - signals cannot be processed as messages. */
 
 	/* Test that method processing works correctly */
-	struct weave_message msg = {.type = WEAVE_MSG_REQUEST,
-				    .method = &test_method_simple,
-				    .request_data =
-					    &(struct test_request){.value = 0x1234, .flags = 0},
-				    .reply_data = &(struct test_reply){0},
-				    .request_size = sizeof(struct test_request),
-				    .reply_size = sizeof(struct test_reply),
-				    .completion = NULL,
-				    .result = NULL};
+	struct test_request req = {.value = 0x1234, .flags = 0};
+	struct test_reply reply = {0};
 
 	/* Clear tracker */
 	atomic_clear(&tracker_a.call_count);
 
-	/* Process method message */
-	weave_process_message(&test_module_a, &msg);
+	/* Call method through proper API */
+	int ret = weave_call_method(&test_port_simple, &req, sizeof(req), &reply, sizeof(reply),
+				    K_MSEC(100));
+
+	/* Should succeed */
+	zassert_equal(ret, 0, "Method call failed: %d", ret);
 
 	/* Verify method handler was called */
 	zassert_equal(atomic_get(&tracker_a.call_count), 1, "Method handler called");
@@ -63,10 +63,14 @@ ZTEST(weave_message_suite, test_signal_method_separation)
 /* Test process with NULL module */
 ZTEST(weave_message_suite, test_process_null_module)
 {
-	struct weave_message msg = {.type = WEAVE_MSG_REQUEST, .method = &test_method_simple};
+	/* Test that weave_process_all_messages handles NULL module gracefully */
+	atomic_clear(&tracker_a.call_count);
 
-	/* Should handle gracefully */
-	weave_process_message(NULL, &msg);
+	/* Should handle NULL gracefully */
+	int processed = weave_process_all_messages(NULL);
+
+	/* Should return 0 for NULL module */
+	zassert_equal(processed, 0, "Should return 0 for NULL module");
 
 	/* Handler should not be called */
 	zassert_equal(atomic_get(&tracker_a.call_count), 0, "Handler should not be called");
@@ -75,21 +79,44 @@ ZTEST(weave_message_suite, test_process_null_module)
 /* Test process with NULL message */
 ZTEST(weave_message_suite, test_process_null_message)
 {
-	/* Should handle gracefully */
-	weave_process_message(&test_module_a, NULL);
+	/* Test calling method with NULL request/reply buffers.
+	 * The API should validate parameters. */
+	atomic_clear(&tracker_a.call_count);
 
-	/* No crash expected */
+	/* Try with NULL request buffer */
+	int ret = weave_call_method(&test_port_simple, NULL, sizeof(struct test_request), NULL,
+				    sizeof(struct test_reply), K_NO_WAIT);
+
+	/* Should fail with invalid parameter */
+	zassert_not_equal(ret, 0, "Should fail with NULL buffers");
+
+	/* Handler should not be called */
 	zassert_equal(atomic_get(&tracker_a.call_count), 0, "Handler should not be called");
 }
 
 /* Test process unknown message type */
 ZTEST(weave_message_suite, test_process_unknown_message_type)
 {
-	struct weave_message msg = {.type = (enum weave_msg_type)999, /* Invalid type */
-				    .method = &test_method_simple};
+	/* Test that invalid port configurations are handled.
+	 * Create a port with NULL target method. */
+	struct weave_method_port invalid_port = {
+		.name = "invalid_port",
+		.target_method = NULL, /* Invalid - NULL method */
+		.request_size = sizeof(struct test_request),
+		.reply_size = sizeof(struct test_reply),
+	};
 
-	/* Should handle unknown type gracefully */
-	weave_process_message(&test_module_a, &msg);
+	struct test_request req = {.value = 0x999, .flags = 0};
+	struct test_reply reply = {0};
+
+	atomic_clear(&tracker_a.call_count);
+
+	/* Should handle invalid port gracefully */
+	int ret = weave_call_method(&invalid_port, &req, sizeof(req), &reply, sizeof(reply),
+				    K_NO_WAIT);
+
+	/* Should fail */
+	zassert_not_equal(ret, 0, "Should fail with NULL method");
 
 	/* Handler should not be called */
 	zassert_equal(atomic_get(&tracker_a.call_count), 0, "Handler should not be called");
@@ -98,20 +125,30 @@ ZTEST(weave_message_suite, test_process_unknown_message_type)
 /* Test process message with no handler */
 ZTEST(weave_message_suite, test_process_no_handler)
 {
-	struct weave_message msg = {
-		.type = WEAVE_MSG_REQUEST,
-		.method = &test_method_no_handler, /* Method with NULL handler */
-		.request_data = &(struct test_request){.value = 0x1234, .flags = 0},
-		.reply_data = &(struct test_reply){0},
+	/* Test that calling a method with no handler doesn't crash.
+	 * We can't test this by calling weave_process_message directly with a stack
+	 * message since that function expects messages embedded in contexts.
+	 * Instead, make a proper method call to a method with no handler. */
+
+	/* Create a port to the method with no handler */
+	struct weave_method_port test_port_no_handler = {
+		.name = "test_port_no_handler",
+		.target_method = &test_method_no_handler,
 		.request_size = sizeof(struct test_request),
 		.reply_size = sizeof(struct test_reply),
-		.completion = NULL,
-		.result = NULL};
+	};
 
-	/* Process the message */
-	weave_process_message(&test_module_a, &msg);
+	struct test_request req = {.value = 0x1234, .flags = 0};
+	struct test_reply reply = {0};
 
-	/* Handler should not crash, tracker should not be updated */
+	/* This should handle the NULL handler gracefully */
+	int ret = weave_call_method(&test_port_no_handler, &req, sizeof(req), &reply, sizeof(reply),
+				    K_MSEC(10));
+
+	/* Should return error since handler is NULL */
+	zassert_equal(ret, -ENOTSUP, "Should return -ENOTSUP for NULL handler");
+
+	/* Handler should not have been called */
 	zassert_equal(atomic_get(&tracker_a.call_count), 0, "Handler should not be called");
 }
 
