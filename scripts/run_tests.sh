@@ -18,6 +18,18 @@ NC='\033[0m' # No Color
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# Source venv if it exists
+[ -f ".venv/bin/activate" ] && source .venv/bin/activate
+
+# Ensure west is available - prefer venv version
+if [ -x ".venv/bin/west" ]; then
+    export PATH="$PWD/.venv/bin:$PATH"
+elif ! command -v west &> /dev/null; then
+    echo -e "${RED}Error: west is not installed${NC}"
+    echo "Install it with: pip install west"
+    exit 1
+fi
+
 # Parse arguments
 MODULE="${1}"
 shift || true  # Remove module name from arguments, remaining are twister options
@@ -58,7 +70,8 @@ run_module_tests() {
 
     # Run tests with Twister
     echo -e "${BLUE}Running all $module_name tests and samples...${NC}"
-    .venv/bin/python zephyr/scripts/twister \
+
+    west twister \
         -T "$module_name" \
         -p native_sim \
         -O twister-out \

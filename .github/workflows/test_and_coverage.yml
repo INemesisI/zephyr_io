@@ -1,0 +1,244 @@
+name: Test & Coverage
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      module:
+        description: 'Module to test'
+        required: false
+        type: choice
+        default: 'all'
+        options:
+          - 'all'
+          - 'flow'
+          - 'weave'
+          - 'register_mapper'
+
+# Cancel ongoing runs for PRs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+# Grant permissions for the workflow
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  test-and-coverage:
+    name: Test & Coverage
+    runs-on: ubuntu-latest
+    container:
+      image: zephyrprojectrtos/ci:v0.26.18
+      options: '--entrypoint /bin/bash'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Complete Zephyr Modules Environment
+        uses: ./.github/actions/setup-zephyr-modules
+        with:
+          zephyr-version: 'v3.7.1'
+          setup-python-env: 'true'
+          install-coverage-tools: 'true'
+
+      - name: Determine modules to test
+        id: detect
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const ALL_MODULES = ['flow', 'weave', 'register_mapper'];
+
+            // manual trigger
+            if (context.payload.inputs?.module) {
+              return context.payload.inputs.module === 'all'
+                ? ALL_MODULES.join(' ')
+                : context.payload.inputs.module;
+            }
+
+            // PR - check what changed
+            if (context.eventName === 'pull_request') {
+              const { data: files } = await github.rest.pulls.listFiles({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+              });
+
+              const changed = new Set();
+              for (const f of files) {
+                // workflow changes = test everything
+                if (f.filename.startsWith('.github/workflows/'))
+                  return ALL_MODULES.join(' ');
+
+                // check module dirs
+                ALL_MODULES.forEach(m => {
+                  if (f.filename.startsWith(m + '/')) changed.add(m);
+                });
+              }
+
+              return changed.size ? Array.from(changed).join(' ') : '';
+            }
+
+            // push to main/develop = test all
+            return ALL_MODULES.join(' ');
+
+      - name: Set modules to test
+        id: modules
+        shell: bash
+        run: |
+          MODULES="${{ steps.detect.outputs.result }}"
+          echo "modules=$MODULES" >> $GITHUB_OUTPUT
+
+          [[ " $MODULES " == *" flow "* ]] && echo "test_flow=true" >> $GITHUB_OUTPUT || echo "test_flow=false" >> $GITHUB_OUTPUT
+          [[ " $MODULES " == *" weave "* ]] && echo "test_weave=true" >> $GITHUB_OUTPUT || echo "test_weave=false" >> $GITHUB_OUTPUT
+          [[ " $MODULES " == *" register_mapper "* ]] && echo "test_register_mapper=true" >> $GITHUB_OUTPUT || echo "test_register_mapper=false" >> $GITHUB_OUTPUT
+
+      - name: Test Flow
+        if: steps.modules.outputs.test_flow == 'true'
+        shell: bash
+        run: |
+          cd zephyr_io
+          ./scripts/generate_coverage.sh flow
+          # Files are now in twister-out/coverage-*.{xml,html,txt}
+
+      - name: Test Weave
+        if: steps.modules.outputs.test_weave == 'true'
+        shell: bash
+        run: |
+          cd zephyr_io
+          ./scripts/generate_coverage.sh weave
+          # Files are now in twister-out/coverage-*.{xml,html,txt}
+
+      - name: Test Register Mapper
+        if: steps.modules.outputs.test_register_mapper == 'true'
+        shell: bash
+        run: |
+          cd zephyr_io
+          ./scripts/generate_coverage.sh register_mapper
+          # Files are now in twister-out/coverage-*.{xml,html,txt}
+
+      - name: Upload Test Results
+        if: always() && steps.detect.outputs.result != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          if-no-files-found: ignore
+          path: |
+            zephyr_io/twister-out/twister.xml
+            zephyr_io/twister-out/twister.json
+
+      - name: Upload Coverage Reports
+        if: always() && steps.detect.outputs.result != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          if-no-files-found: ignore
+          path: |
+            zephyr_io/twister-out/coverage-*.xml
+            zephyr_io/twister-out/coverage-*.html
+            zephyr_io/twister-out/coverage-summary-*.txt
+
+      - name: Publish Test Results
+        if: always() && steps.detect.outputs.result != ''
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          check_name: Test Results
+          files: "zephyr_io/**/twister.xml"
+          comment_mode: off
+
+      - name: Comment PR with Coverage
+        if: github.event_name == 'pull_request' && steps.detect.outputs.result != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const modules = '${{ steps.detect.outputs.result }}'.split(' ');
+            let rows = [];
+            let failed = false;
+
+            const THRESHOLDS = { flow: 90, weave: 80, register_mapper: 80 };
+            const NAMES = { flow: 'Flow', weave: 'Weave', register_mapper: 'Register Mapper' };
+
+            for (const mod of modules) {
+              const file = `zephyr_io/twister-out/coverage-summary-${mod}.txt`;
+              if (!fs.existsSync(file)) continue;
+
+              const text = fs.readFileSync(file, 'utf8');
+              const lines = text.match(/lines:\s+([\d.]+)%/)?.[1] || '0';
+              const funcs = text.match(/functions:\s+([\d.]+)%/)?.[1] || '0';
+              const branches = text.match(/branches:\s+([\d.]+)%/)?.[1] || '0';
+
+              const threshold = THRESHOLDS[mod];
+              const pass = parseFloat(lines) >= threshold;
+              if (!pass) failed = true;
+
+              rows.push(`| ${pass ? '✅' : '❌'} ${NAMES[mod]} | ${lines}% | ${funcs}% | ${branches}% | ${threshold}% |`);
+            }
+
+            if (!rows.length) return;
+
+            const body = `## ${failed ? '🔴' : '🟢'} Test & Coverage
+
+            | Module | Lines | Functions | Branches | Required |
+            |--------|------:|----------:|---------:|---------:|
+            ${rows.join('\n')}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Test & Coverage')
+            );
+
+            const params = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            };
+
+            if (existing) {
+              await github.rest.issues.updateComment({ ...params, comment_id: existing.id });
+            } else {
+              await github.rest.issues.createComment({ ...params, issue_number: context.issue.number });
+            }
+
+      - name: Coverage Status Check
+        if: github.event_name == 'pull_request' && steps.detect.outputs.result != ''
+        shell: bash
+        run: |
+          cd zephyr_io
+          fail=0
+
+          check_coverage() {
+            local module=$1 threshold=$2
+            [ -f "twister-out/coverage-summary-${module}.txt" ] || return 0
+
+            cov=$(grep "lines:" twister-out/coverage-summary-${module}.txt | grep -o '[0-9.]*' | head -1)
+            if (( $(echo "$cov < $threshold" | bc -l) )); then
+              echo "❌ $module: ${cov}% < ${threshold}% threshold"
+              return 1
+            else
+              echo "✅ $module: ${cov}% >= ${threshold}% threshold"
+              return 0
+            fi
+          }
+
+          [ "${{ steps.modules.outputs.test_flow }}" = "true" ] && check_coverage flow 90 || fail=$?
+          [ "${{ steps.modules.outputs.test_weave }}" = "true" ] && check_coverage weave 80 || fail=$?
+          [ "${{ steps.modules.outputs.test_register_mapper }}" = "true" ] && check_coverage register_mapper 80 || fail=$?
+
+          exit $fail

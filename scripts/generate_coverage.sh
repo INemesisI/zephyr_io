@@ -18,6 +18,18 @@ NC='\033[0m' # No Color
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# Source venv if it exists
+[ -f ".venv/bin/activate" ] && source .venv/bin/activate
+
+# Ensure west is available - prefer venv version
+if [ -x ".venv/bin/west" ]; then
+    export PATH="$PWD/.venv/bin:$PATH"
+elif ! command -v west &> /dev/null; then
+    echo -e "${RED}Error: west is not installed${NC}"
+    echo "Install it with: pip install west"
+    exit 1
+fi
+
 # Parse arguments
 MODULE="${1}"
 shift || true  # Remove module name from arguments, remaining are twister options
@@ -72,16 +84,16 @@ export ZEPHYR_EXTRA_MODULES="$PROJECT_ROOT/$MODULE"
 export PYTHON_PREFER="$PROJECT_ROOT/.venv/bin/python3"
 export CMAKE_PREFIX_PATH="$PROJECT_ROOT/.venv"
 
-# Define coverage output directory
-COVERAGE_DIR="twister-coverage-${MODULE}"
+# Define coverage output directory - use consistent twister-out like run_tests.sh
+COVERAGE_DIR="twister-out"
 
-# Clean up old coverage data
-echo "Cleaning previous coverage data..."
-rm -rf "$COVERAGE_DIR"
+# Note: Not cleaning up to preserve build artifacts and speed up incremental builds
+# The --no-clean flag will handle this for us
 
 # Run tests with coverage enabled
 echo -e "${BLUE}Running $MODULE tests with coverage...${NC}"
-.venv/bin/python zephyr/scripts/twister \
+
+west twister \
     --coverage \
     -p native_sim \
     -T "$MODULE" \
@@ -95,34 +107,10 @@ if [ ! -d "$COVERAGE_DIR" ]; then
     exit 1
 fi
 
-# Create work directory for combined coverage
-WORK_DIR="coverage-work-${MODULE}"
-rm -rf "$WORK_DIR"
-mkdir -p "$WORK_DIR"
-
 echo ""
-echo -e "${YELLOW}Combining coverage data from all test suites...${NC}"
+echo -e "${YELLOW}Generating coverage reports for $MODULE...${NC}"
 
-# Find and copy all .gcda and .gcno files to work directory
-# This combines coverage from multiple test suites
-find "$COVERAGE_DIR" -name "*.gcda" -o -name "*.gcno" | while read file; do
-    # Get the base filename
-    base=$(basename "$file")
-    # Extract test suite name to avoid overwrites
-    testname=$(echo "$file" | sed "s|.*/${MODULE}\.\([^/]*\)/.*|\1|")
-    if [[ "$file" == *.gcda ]]; then
-        # Copy .gcda files with test suite prefix to avoid overwrites
-        cp "$file" "$WORK_DIR/${testname}_${base}" 2>/dev/null || true
-    else
-        # For .gcno files, we only need one copy
-        cp "$file" "$WORK_DIR/${base}" 2>/dev/null || true
-    fi
-done
-
-echo ""
-echo -e "${YELLOW}Generating coverage report...${NC}"
-
-# Generate coverage report using gcovr on the combined data
+# Generate coverage reports directly from the test output directory
 cd "$COVERAGE_DIR"
 
 # Generate text summary
@@ -146,9 +134,32 @@ gcovr \
     --filter "../${MODULE}/subsys/.*\.c$" \
     --exclude-directories "../${MODULE}/tests" \
     --exclude-directories "../${MODULE}/samples" \
-    --html-details coverage.html \
+    --html-details coverage-${MODULE}.html \
     --gcov-ignore-errors=no_working_dir_found \
     . 2>/dev/null || true
+
+# Generate XML report for CI
+echo "Generating XML report..."
+gcovr \
+    --root ../ \
+    --filter "../${MODULE}/subsys/.*\.c$" \
+    --exclude-directories "../${MODULE}/tests" \
+    --exclude-directories "../${MODULE}/samples" \
+    --xml coverage-${MODULE}.xml \
+    --gcov-ignore-errors=no_working_dir_found \
+    . 2>/dev/null || true
+
+# Generate summary to a file for CI
+echo "Generating coverage summary..."
+gcovr \
+    --root ../ \
+    --filter "../${MODULE}/subsys/.*\.c$" \
+    --exclude-directories "../${MODULE}/tests" \
+    --exclude-directories "../${MODULE}/samples" \
+    --print-summary \
+    --txt-metric branch \
+    --gcov-ignore-errors=no_working_dir_found \
+    . > coverage-summary-${MODULE}.txt 2>/dev/null || true
 
 cd ..
 
@@ -168,13 +179,10 @@ for test_dir in "$COVERAGE_DIR"/native_sim/*/; do
     fi
 done
 
-# Clean up work directory
-rm -rf "$WORK_DIR"
-
 # Summary
 echo ""
 echo -e "${GREEN}Coverage report complete!${NC}"
-echo "HTML Report: file://$PROJECT_ROOT/$COVERAGE_DIR/coverage.html"
-echo "To view in browser: firefox $COVERAGE_DIR/coverage.html"
-echo ""
-echo "Note: Coverage data is combined from all test suites"
+echo "Reports generated in: $COVERAGE_DIR/"
+echo "  - HTML: coverage-${MODULE}.html"
+echo "  - XML: coverage-${MODULE}.xml"
+echo "  - Summary: coverage-summary-${MODULE}.txt"
