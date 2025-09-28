@@ -32,7 +32,7 @@ WEAVE_SIGNAL_CONNECT(threshold_exceeded, monitor_on_threshold_exceeded);
  * Application Main
  * ======================================================================== */
 
-void main(void)
+int main(void)
 {
 	int ret;
 
@@ -131,4 +131,6 @@ void main(void)
 	LOG_INF("- Modules cleanly separated into individual files");
 	LOG_INF("- Connections wired at compile time in main.c");
 	LOG_INF("- Thread boundaries properly respected");
+
+	return 0;
 }
