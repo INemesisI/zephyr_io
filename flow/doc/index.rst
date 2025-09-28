@@ -34,6 +34,7 @@ The system comprises:
 * **Sinks**: Packet consumers with handler callbacks that process packets immediately or via queues
 * **Packet Event Queues**: Message queues that handle deferred packet processing for queued sinks
 * **Connections**: Static compile-time wiring between sources and sinks
+* **Packet ID Routing**: Optional packet identification and filtering for efficient routing
 * **Zero-copy distribution**: Leverages :c:struct:`net_buf` reference counting to avoid data copies
 
 .. figure:: images/flow_anatomy.svg
@@ -107,15 +108,15 @@ Packet Distribution Process
 When a source sends a packet, the following sequence occurs:
 
 1. **Lock acquisition**: The source's connection list is protected by a spinlock
-2. **Distribution**: For each connected sink:
-
+2. **Packet ID stamping** (if configured): Source stamps its packet ID in the buffer's user data
+3. **Distribution**: For each connected sink:
+   * **Packet ID filtering**: Skip sink if packet ID doesn't match sink's accept_id
    * **Immediate mode**: Handler executes immediately in source context
    * **Queued mode**: Packet event is queued for later processing
    * On success: increment buffer reference count
    * On queue failure: drop and count
-
-3. **Lock release**: Spinlock is released
-4. **Reference handling**:
+4. **Lock release**: Spinlock is released
+5. **Reference handling**:
 
    * ``flow_source_send``: Caller retains their reference
    * ``flow_source_send_consume``: Caller's reference is consumed
@@ -162,15 +163,22 @@ Defining Sources and Sinks
 Sources
 -------
 
-A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURCE_DEFINE`:
+A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURCE_DEFINE` or
+:c:macro:`FLOW_SOURCE_DEFINE_ROUTED` for packet ID stamping:
 
 .. code-block:: c
 
     #include <zephyr_io/flow/flow.h>
 
-    /* Define buffer pool and source */
+    /* Define buffer pool and sources */
     NET_BUF_POOL_DEFINE(sensor_pool, 10, 64, 4, NULL);
-    FLOW_SOURCE_DEFINE(sensor_source);
+
+    /* Basic source - no packet ID stamping */
+    FLOW_SOURCE_DEFINE(basic_source);
+
+    /* Routed source - stamps packets with ID 0x1001 */
+    FLOW_SOURCE_DEFINE_ROUTED(sensor1_source, 0x1001);
+    FLOW_SOURCE_DEFINE_ROUTED(sensor2_source, 0x1002);
 
     void sensor_thread(void)
     {
@@ -186,7 +194,8 @@ A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURC
             memset(data, 0x42, 64);  /* Fill with sensor data */
 
             /* Send to all connected sinks - consume reference */
-            flow_source_send_consume(&sensor_source, buf, K_MSEC(100));
+            /* Routed sources automatically stamp packet ID */
+            flow_source_send_consume(&sensor1_source, buf, K_MSEC(100));
             /* No need to unref - send_consume handles it */
 
             k_sleep(K_MSEC(100));
@@ -223,8 +232,11 @@ or queue packets for deferred processing.
         /* Buffer is borrowed, unref is handled automatically */
     }
 
-    /* Define immediate sink */
+    /* Define immediate sink - accepts all packet IDs */
     FLOW_SINK_DEFINE_IMMEDIATE(logger_sink, logger_handler);
+
+    /* Define routed immediate sink - only accepts packet ID 0x1001 */
+    FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(sensor1_logger, logger_handler, 0x1001);
 
 **Queued Mode Sink** (deferred processing):
 
@@ -233,8 +245,12 @@ or queue packets for deferred processing.
     /* Define packet event queue for deferred handling */
     FLOW_EVENT_QUEUE_DEFINE(processing_queue, 64);
 
-    /* Define queued sink */
+    /* Define queued sink - accepts all packet IDs */
     FLOW_SINK_DEFINE_QUEUED(processor_sink, logger_handler, processing_queue);
+
+    /* Define routed queued sink - only accepts packet ID 0x1002 */
+    FLOW_SINK_DEFINE_ROUTED_QUEUED(sensor2_processor, logger_handler,
+                                   processing_queue, 0x1002);
 
     /* Processing thread */
     void processor_thread(void)
@@ -511,6 +527,59 @@ A common pattern for distributing sensor data to multiple consumers:
 
     /* Only accelerometer to network (bandwidth limited) */
     FLOW_CONNECT(&accel_source, &network_sink);
+
+Packet ID Routing Pattern
+=========================
+
+The Flow system supports efficient packet routing using packet IDs. Sources can stamp packets
+with IDs, and sinks can filter to only accept specific IDs:
+
+.. code-block:: c
+
+    /* Define sources with packet IDs */
+    FLOW_SOURCE_DEFINE_ROUTED(temperature_source, 0x0001);
+    FLOW_SOURCE_DEFINE_ROUTED(humidity_source, 0x0002);
+    FLOW_SOURCE_DEFINE_ROUTED(pressure_source, 0x0003);
+
+    /* Define sinks that filter by packet ID */
+    FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(temp_processor, handle_temperature, 0x0001);
+    FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(humid_processor, handle_humidity, 0x0002);
+    FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(press_processor, handle_pressure, 0x0003);
+
+    /* Universal sink that accepts all packet IDs */
+    FLOW_SINK_DEFINE_IMMEDIATE(data_logger, log_all_sensors);
+
+    /* Connect all sources to all sinks - filtering is automatic */
+    FLOW_CONNECT(&temperature_source, &temp_processor);   /* Only temp packets */
+    FLOW_CONNECT(&humidity_source, &humid_processor);     /* Only humidity packets */
+    FLOW_CONNECT(&pressure_source, &press_processor);     /* Only pressure packets */
+
+    /* Logger receives all packets */
+    FLOW_CONNECT(&temperature_source, &data_logger);
+    FLOW_CONNECT(&humidity_source, &data_logger);
+    FLOW_CONNECT(&pressure_source, &data_logger);
+
+    /* Sending automatically stamps packet ID and routes to matching sinks */
+    flow_source_send(&temperature_source, temp_buf, K_NO_WAIT);
+    /* Only temp_processor and data_logger receive this packet */
+
+**Manual Packet ID Management**:
+
+.. code-block:: c
+
+    /* Set packet ID manually in buffer */
+    flow_packet_id_set(buf, 0x1234);
+
+    /* Get packet ID from buffer */
+    uint16_t packet_id;
+    if (flow_packet_id_get(buf, &packet_id) == 0) {
+        LOG_INF("Packet ID: 0x%04x", packet_id);
+    }
+
+    /* FLOW_PACKET_ID_ANY (0xFFFF) is a special value */
+    /* - Sources with this ID don't stamp packets */
+    /* - Sinks with this ID accept all packets */
+    /* - Packets with this ID are accepted by all sinks */
 
 Router Pattern
 ==============

@@ -8,6 +8,7 @@ Flow (Fast Lightweight Object Wiring) is a high-performance, thread-safe, zero-c
 ## 🚀 Features
 
 - **Many-to-Many Routing**: Sources can send to multiple sinks, sinks can receive from multiple sources
+- **Packet ID Filtering**: Sources can stamp packets with IDs, sinks can filter by specific IDs
 - **Flexible Execution Modes**: Immediate (in source context) or queued (deferred processing) handler based processing
 - **Zero-Copy Distribution**: Efficient packet sharing using `net_buf` reference counting
 - **Protocol Packaging**: Chain buffers to add headers/footers without copying payload data
@@ -51,6 +52,28 @@ FLOW_CONNECT(&data_source, &queued_sink);
 flow_source_send(&data_source, buf, K_MSEC(100));
 ```
 
+### Packet ID Routing
+
+```c
+// Define routed sources with specific packet IDs
+FLOW_SOURCE_DEFINE_ROUTED(sensor1_source, 0x1001);
+FLOW_SOURCE_DEFINE_ROUTED(sensor2_source, 0x1002);
+
+// Define routed sinks that filter by packet ID
+FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(sensor1_processor, handle_sensor1, 0x1001);
+FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(sensor2_processor, handle_sensor2, 0x1002);
+FLOW_SINK_DEFINE_IMMEDIATE(all_sensors, handle_any_sensor); // Accepts all IDs
+
+// Connect sources to sinks - filtering happens automatically
+FLOW_CONNECT(&sensor1_source, &sensor1_processor);  // Only 0x1001 packets
+FLOW_CONNECT(&sensor2_source, &sensor2_processor);  // Only 0x1002 packets
+FLOW_CONNECT(&sensor1_source, &all_sensors);        // Accepts any ID
+FLOW_CONNECT(&sensor2_source, &all_sensors);        // Accepts any ID
+
+// Packets are automatically stamped with source's ID and filtered at sinks
+flow_source_send(&sensor1_source, buf, K_NO_WAIT);  // Stamped with 0x1001
+```
+
 ### Processing Thread for Queued Sinks
 
 ```c
@@ -70,22 +93,14 @@ void processor_thread(void)
 ### Sample Application
 
 See `flow/samples/basic_packet_routing/` for a complete integration example demonstrating:
-- Multi-sensor data collection with event-driven processing
+- Multi-sensor data collection with packet ID-based routing
 - Zero-copy header addition in processor node
-- Distribution to multiple sinks with different execution modes
-- Packet validation with immediate handlers
-
-```
-Packet flow:
-  sensor1 ─┐                    ┌─→ TCP sink (queued processing)
-           ├─→ processor node ──┤
-  sensor2 ─┘    (adds header)   └─→ Validator (immediate execution)
-```
+- Echo service with packet loopback
+- Incoming packet validation
 
 ## 🚧 Limitations
 
 - **Native buffer pools**: Designed for `net_buf` - other buffer types require adaptation
-- **Single packet per send**: No scatter-gather or batch operations
 - **Handler ownership**: Handlers receive borrowed buffers - must NOT call `net_buf_unref()`
 
 ## 🛠️ Building and Testing
