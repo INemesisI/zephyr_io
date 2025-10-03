@@ -192,29 +192,29 @@ FLOW_EVENT_QUEUE_DEFINE(perf_queue, 128);
 FLOW_SOURCE_DEFINE(eth_rx_source);
 FLOW_SOURCE_DEFINE(eth_tx_source);
 
-FLOW_SINK_DEFINE_QUEUED(packet_filter_sink, eth_filter_handler, eth_queue);
-FLOW_SINK_DEFINE_QUEUED(packet_router_sink, eth_router_handler, eth_queue);
+FLOW_SINK_DEFINE_QUEUED(packet_filter_sink, eth_filter_handler, &eth_queue);
+FLOW_SINK_DEFINE_QUEUED(packet_router_sink, eth_router_handler, &eth_queue);
 FLOW_SINK_DEFINE_IMMEDIATE(packet_logger_sink, eth_logger_handler);
 
 /* Streaming pipeline */
 FLOW_SOURCE_DEFINE(stream_producer);
 
-FLOW_SINK_DEFINE_QUEUED(stream_consumer1, stream_consumer1_handler, stream_queue);
-FLOW_SINK_DEFINE_QUEUED(stream_consumer2, stream_consumer2_handler, stream_queue);
-FLOW_SINK_DEFINE_QUEUED(stream_buffer, stream_buffer_handler, stream_queue);
+FLOW_SINK_DEFINE_QUEUED(stream_consumer1, stream_consumer1_handler, &stream_queue);
+FLOW_SINK_DEFINE_QUEUED(stream_consumer2, stream_consumer2_handler, &stream_queue);
+FLOW_SINK_DEFINE_QUEUED(stream_buffer, stream_buffer_handler, &stream_queue);
 
 /* Bulk transfer pipeline */
 FLOW_SOURCE_DEFINE(bulk_source);
 
-FLOW_SINK_DEFINE_QUEUED(bulk_processor, bulk_processor_handler, bulk_queue);
-FLOW_SINK_DEFINE_QUEUED(bulk_storage, bulk_storage_handler, bulk_queue);
+FLOW_SINK_DEFINE_QUEUED(bulk_processor, bulk_processor_handler, &bulk_queue);
+FLOW_SINK_DEFINE_QUEUED(bulk_storage, bulk_storage_handler, &bulk_queue);
 
 /* Performance test sources/sinks */
 FLOW_SOURCE_DEFINE(perf_source1);
 FLOW_SOURCE_DEFINE(perf_source2);
 FLOW_SOURCE_DEFINE(perf_source3);
 
-FLOW_SINK_DEFINE_QUEUED(perf_sink, perf_handler, perf_queue);
+FLOW_SINK_DEFINE_QUEUED(perf_sink, perf_handler, &perf_queue);
 
 /* Wire connections */
 FLOW_CONNECT(&eth_rx_source, &packet_filter_sink);

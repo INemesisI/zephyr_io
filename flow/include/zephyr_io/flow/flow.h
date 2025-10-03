@@ -37,7 +37,6 @@ extern "C" {
 
 /* Forward declarations */
 struct flow_sink;
-struct flow_event_queue;
 
 /** @brief Special packet ID that matches any packet */
 #define FLOW_PACKET_ID_ANY 0xFFFF
@@ -70,7 +69,7 @@ struct flow_source {
 	/** Number of send operations attempted */
 	atomic_t send_count;
 	/** Total number of successful queue operations across all sinks */
-	atomic_t queued_total;
+	atomic_t delivery_count;
 #endif
 };
 
@@ -80,20 +79,6 @@ struct flow_event {
 	struct flow_sink *sink;
 	/** The packet buffer */
 	struct net_buf *buf;
-};
-
-/** @brief Flow IO event queue for managing message queues */
-struct flow_event_queue {
-	/** Message queue for packet events */
-	struct k_msgq *msgq;
-#ifdef CONFIG_FLOW_NAMES
-	/** Name of the queue */
-	const char *name;
-#endif
-#ifdef CONFIG_FLOW_STATS
-	/** Number of events processed */
-	atomic_t processed_count;
-#endif
 };
 
 /** @brief Flow IO sink structure */
@@ -173,7 +158,7 @@ struct flow_connection {
 			.packet_id = (_id),                                                        \
 		      .connections = SYS_SLIST_STATIC_INIT(&_name.connections), .lock = {},        \
 		      IF_ENABLED(CONFIG_FLOW_STATS,                                                \
-				 (.send_count = ATOMIC_INIT(0), .queued_total = ATOMIC_INIT(0)))   \
+				 (.send_count = ATOMIC_INIT(0), .delivery_count = ATOMIC_INIT(0))) \
 	}
 
 /**
@@ -243,19 +228,19 @@ struct flow_connection {
  *
  * @param _name Name of the sink variable
  * @param _handler Handler function to call for each packet
- * @param _queue Pointer to flow_event_queue to use
+ * @param _queue Pointer to k_msgq to use
  * @param ... Optional user data (defaults to NULL)
  */
 #define FLOW_SINK_DEFINE_QUEUED(...)                                                               \
 	UTIL_CAT(Z_FLOW_SINK_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
 
 #define Z_FLOW_SINK_QUEUED_3(_name, _handler, _queue)                                              \
-	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler,          \
-						       &(_queue##_msgq), NULL, FLOW_PACKET_ID_ANY)
+	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler, _queue,  \
+						       NULL, FLOW_PACKET_ID_ANY)
 
 #define Z_FLOW_SINK_QUEUED_4(_name, _handler, _queue, _data)                                       \
-	struct flow_sink _name = FLOW_SINK_INITIALIZER(                                            \
-		_name, SINK_MODE_QUEUED, _handler, &(_queue##_msgq), _data, FLOW_PACKET_ID_ANY)
+	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler, _queue,  \
+						       _data, FLOW_PACKET_ID_ANY)
 
 /* -------------------- Routed Source Definitions -------------------- */
 
@@ -325,11 +310,7 @@ struct flow_connection {
  * @param _size Maximum number of events in the queue
  */
 #define FLOW_EVENT_QUEUE_DEFINE(_name, _size)                                                      \
-	K_MSGQ_DEFINE(_name##_msgq, sizeof(struct flow_event), _size, 4);                          \
-	struct flow_event_queue _name = {                                                          \
-		.msgq = &_name##_msgq,                                                             \
-		IF_ENABLED(CONFIG_FLOW_NAMES, (.name = #_name, ))                                  \
-			IF_ENABLED(CONFIG_FLOW_STATS, (.processed_count = ATOMIC_INIT(0), ))}
+	K_MSGQ_DEFINE(_name, sizeof(struct flow_event), _size, 4);
 
 /* -------------------- Connection Definition -------------------- */
 
@@ -375,6 +356,29 @@ struct flow_connection {
 int flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout);
 
 /**
+ * @brief Send a routed packet from source to all connected sinks
+ *
+ * This function sends a net_buf packet to all sinks connected to the
+ * source, stamping the specified packet ID on the buffer. The function
+ * does NOT consume the caller's reference. Each successfully queued
+ * sink gets its own reference.
+ *
+ * The timeout represents the total time the send operation may take.
+ * If a sink blocks and the timeout expires, remaining sinks are
+ * attempted with K_NO_WAIT to ensure all sinks get a chance.
+ *
+ * @param src Pointer to the packet source
+ * @param buf Pointer to the net_buf to send (reference is NOT consumed)
+ * @param timeout Maximum time to wait for all sinks (K_NO_WAIT, K_FOREVER, or
+ * timeout)
+ * @param packet_id Packet ID to stamp on outgoing packets
+ *
+ * @return Number of sinks that successfully received the packet
+ */
+int flow_source_send_routed(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout,
+			    uint16_t packet_id);
+
+/**
  * @brief Send a packet from source to all connected sinks (consuming reference)
  *
  * This function sends a net_buf packet to all sinks connected to the
@@ -405,12 +409,12 @@ int flow_source_send_consume(struct flow_source *src, struct net_buf *buf, k_tim
  * The sink's handler is called with the packet, then the buffer is
  * unreferenced.
  *
- * @param queue Pointer to the packet event queue
+ * @param queue Pointer to the packet message queue
  * @param timeout Maximum time to wait for an event
  *
  * @return 0 on success, -EAGAIN if no event available, negative errno on error
  */
-int flow_event_process(struct flow_event_queue *queue, k_timeout_t timeout);
+int flow_event_process(struct k_msgq *queue, k_timeout_t timeout);
 
 /**
  * @brief Deliver a packet directly to a sink
@@ -510,10 +514,10 @@ int flow_runtime_disconnect(struct flow_source *source, struct flow_sink *sink);
  *
  * @param src Pointer to the packet source
  * @param send_count Output: number of send operations attempted (can be NULL)
- * @param queued_total Output: total successful queue operations across all
+ * @param delivery_count Output: total successful queue operations across all
  * sinks (can be NULL)
  */
-void flow_source_get_stats(struct flow_source *src, uint32_t *send_count, uint32_t *queued_total);
+void flow_source_get_stats(struct flow_source *src, uint32_t *send_count, uint32_t *delivery_count);
 
 /**
  * @brief Get sink statistics

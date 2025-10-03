@@ -92,7 +92,7 @@ static void runtime_queued_handler(struct flow_sink *sink, struct net_buf *buf)
 }
 
 /* Define queued execution sink */
-FLOW_SINK_DEFINE_QUEUED(runtime_queued_sink, runtime_queued_handler, runtime_queue,
+FLOW_SINK_DEFINE_QUEUED(runtime_queued_sink, runtime_queued_handler, &runtime_queue,
 			&runtime_capture1);
 
 /* Setup function - runs before each test */

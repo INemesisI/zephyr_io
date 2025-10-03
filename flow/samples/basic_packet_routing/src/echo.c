@@ -20,7 +20,7 @@ FLOW_EVENT_QUEUE_DEFINE(echo_queue, 10);
 static void echo_handler(struct flow_sink *sink, struct net_buf *buf);
 
 /* Define echo sink with queued handler */
-FLOW_SINK_DEFINE_QUEUED(echo_sink, echo_handler, echo_queue);
+FLOW_SINK_DEFINE_QUEUED(echo_sink, echo_handler, &echo_queue);
 
 /* Define echo source - sends received packets back */
 FLOW_SOURCE_DEFINE(echo_source);

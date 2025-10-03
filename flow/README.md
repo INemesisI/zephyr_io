@@ -42,7 +42,7 @@ FLOW_SINK_DEFINE_IMMEDIATE(immediate_sink, process_handler);
 
 // Or define Flow IO event queue sink for deferred processing in another thread
 FLOW_EVENT_QUEUE_DEFINE(udp_queue, 32);  // 32 events max
-FLOW_SINK_DEFINE_QUEUED(queued_sink, process_handler, udp_queue);
+FLOW_SINK_DEFINE_QUEUED(queued_sink, process_handler,  &udp_queue);
 
 // Wire connections
 FLOW_CONNECT(&data_source, &immediate_sink);

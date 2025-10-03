@@ -31,10 +31,10 @@ static void outbound_handler(struct flow_sink *sink, struct net_buf *buf);
 static void inbound_handler(struct flow_sink *sink, struct net_buf *buf);
 
 /* Define outbound sink for packets from sensors */
-FLOW_SINK_DEFINE_QUEUED(processor_outbound_sink, outbound_handler, processor_queue);
+FLOW_SINK_DEFINE_QUEUED(processor_outbound_sink, outbound_handler, &processor_queue);
 
 /* Define inbound sink for packets from echo server */
-FLOW_SINK_DEFINE_QUEUED(processor_inbound_sink, inbound_handler, processor_queue);
+FLOW_SINK_DEFINE_QUEUED(processor_inbound_sink, inbound_handler, &processor_queue);
 
 /* Define sources for forwarding packets */
 FLOW_SOURCE_DEFINE(processor_outbound_source); /* For sending to echo server */
@@ -90,7 +90,6 @@ static void inbound_handler(struct flow_sink *sink, struct net_buf *buf)
 {
 	struct packet_header *header;
 	struct net_buf *payload_buf;
-	int ret;
 
 	/* Check if buffer has header */
 	if (buf->len < sizeof(struct packet_header)) {
@@ -108,16 +107,10 @@ static void inbound_handler(struct flow_sink *sink, struct net_buf *buf)
 
 	payload_buf = buf->frags;
 
-	/* Set the packet ID in the payload buffer for routing to the correct
-	 * validator */
-	ret = flow_packet_id_set(payload_buf, header->packet_id);
-	if (ret != 0) {
-		LOG_WRN("Failed to set packet ID for routing: %d", ret);
-	}
-
 	/* Forward only the payload (without header) to the correct validator */
 	/* flow_source_send takes its own reference, so we don't need to ref/unref */
-	flow_source_send(&processor_inbound_source, payload_buf, K_NO_WAIT);
+	flow_source_send_routed(&processor_inbound_source, payload_buf, K_NO_WAIT,
+				header->packet_id);
 }
 
 static void processor_thread_fn(void *p1, void *p2, void *p3)

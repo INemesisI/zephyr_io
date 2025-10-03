@@ -147,7 +147,7 @@ The Flow system provides a handler-based API with flexible execution modes:
 
     /* Define packet event queue for queued execution */
     FLOW_EVENT_QUEUE_DEFINE(my_queue, 32);  /* 32 events max */
-    FLOW_SINK_DEFINE_QUEUED(my_sink_queued, my_handler, my_queue);
+    FLOW_SINK_DEFINE_QUEUED(my_sink_queued, my_handler,  &my_queue);
 
     /* Connect source to sinks at compile time */
     FLOW_CONNECT(&my_source, &my_sink_immediate);
@@ -246,7 +246,7 @@ or queue packets for deferred processing.
     FLOW_EVENT_QUEUE_DEFINE(processing_queue, 64);
 
     /* Define queued sink - accepts all packet IDs */
-    FLOW_SINK_DEFINE_QUEUED(processor_sink, logger_handler, processing_queue);
+    FLOW_SINK_DEFINE_QUEUED(processor_sink, logger_handler,  &processing_queue);
 
     /* Define routed queued sink - only accepts packet ID 0x1002 */
     FLOW_SINK_DEFINE_ROUTED_QUEUED(sensor2_processor, logger_handler,
@@ -283,7 +283,7 @@ Static connections are established using :c:macro:`FLOW_CONNECT`:
     FLOW_SOURCE_DEFINE(sensor_source);
 
     /* network.c - Network module */
-    FLOW_SINK_DEFINE_QUEUED(network_sink, network_handler, net_queue);
+    FLOW_SINK_DEFINE_QUEUED(network_sink, network_handler,  &net_queue);
 
     /* logger.c - Logging module */
     FLOW_SINK_DEFINE_IMMEDIATE(logger_sink, log_handler);
@@ -450,13 +450,13 @@ When :kconfig:option:`CONFIG_FLOW_STATS` is enabled, the system tracks:
 
     void print_statistics(void)
     {
-        uint32_t send_count, queued_total, handled_count, dropped_count;
+        uint32_t send_count, delivery_count, handled_count, dropped_count;
 
         /* Source statistics */
-        flow_source_get_stats(&my_source, &send_count, &queued_total);
+        flow_source_get_stats(&my_source, &send_count, &delivery_count);
         LOG_INF("Source statistics:");
         LOG_INF("  Messages sent: %u", send_count);
-        LOG_INF("  Queued total: %u", queued_total);
+        LOG_INF("  Queued total: %u", delivery_count);
 
         /* Sink statistics */
         flow_sink_get_stats(&my_sink, &handled_count, &dropped_count);
@@ -509,10 +509,10 @@ A common pattern for distributing sensor data to multiple consumers:
 
     /* Various data consumers */
     FLOW_EVENT_QUEUE_DEFINE(fusion_queue, 128);
-    FLOW_SINK_DEFINE_QUEUED(fusion_sink, fusion_handler, fusion_queue);
+    FLOW_SINK_DEFINE_QUEUED(fusion_sink, fusion_handler,  &fusion_queue);
     FLOW_SINK_DEFINE_IMMEDIATE(logger_sink, logger_handler);
     FLOW_EVENT_QUEUE_DEFINE(network_queue, 32);
-    FLOW_SINK_DEFINE_QUEUED(network_sink, network_handler, network_queue);
+    FLOW_SINK_DEFINE_QUEUED(network_sink, network_handler,  &network_queue);
 
     /* All sensors to fusion algorithm */
     FLOW_CONNECT(&accel_source, &fusion_sink);
@@ -612,7 +612,7 @@ Implementing a packet router that distributes based on packet type:
 
     /* Router with multiple outputs */
     FLOW_EVENT_QUEUE_DEFINE(router_queue, 256);
-    FLOW_SINK_DEFINE_QUEUED(router_input, router_handler, router_queue);
+    FLOW_SINK_DEFINE_QUEUED(router_input, router_handler,  &router_queue);
     FLOW_SOURCE_DEFINE(tcp_output);
     FLOW_SOURCE_DEFINE(udp_output);
     FLOW_SOURCE_DEFINE(raw_output);
@@ -672,7 +672,7 @@ The Flow system can be used from ISRs with proper sink configuration:
 
     /* Use queued sink for ISR sources to defer processing */
     FLOW_EVENT_QUEUE_DEFINE(isr_queue, 128);
-    FLOW_SINK_DEFINE_QUEUED(isr_sink, process_handler, isr_queue);
+    FLOW_SINK_DEFINE_QUEUED(isr_sink, process_handler,  &isr_queue);
 
     void my_isr(void *arg)
     {

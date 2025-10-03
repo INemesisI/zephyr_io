@@ -14,7 +14,7 @@
 LOG_MODULE_REGISTER(flow, CONFIG_FLOW_LOG_LEVEL);
 
 /* Helper function to execute handler and manage buffer lifecycle */
-static int execute_handler(struct flow_sink *sink, struct net_buf *buf)
+int flow_event_handler(struct flow_sink *sink, struct net_buf *buf)
 {
 	/* Validate inputs */
 	if (!sink || !buf || !sink->handler) {
@@ -53,15 +53,25 @@ int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t t
 {
 	int ret = 0;
 
-	if (!sink || !buf) {
+	if (!sink || !buf || !sink->handler) {
 		return -EINVAL;
+	}
+
+	/* Check packet ID filter */
+	if (sink->accept_id != FLOW_PACKET_ID_ANY) {
+		uint16_t packet_id;
+		flow_packet_id_get(buf, &packet_id);
+		/* Skip if packet ID doesn't match and packet isn't broadcast */
+		if (packet_id != sink->accept_id) {
+			return -ENOTSUP;
+		}
 	}
 
 	struct net_buf *ref = net_buf_ref(buf); /* Reference for the sink */
 
 	if (sink->mode == SINK_MODE_IMMEDIATE) {
 		/* Execute handler immediately in source context */
-		ret = execute_handler(sink, ref);
+		ret = flow_event_handler(sink, ref);
 	} else if (sink->mode == SINK_MODE_QUEUED) {
 		/* Queue packet event for later processing */
 		if (!sink->msgq) {
@@ -105,22 +115,12 @@ int flow_sink_deliver_consume(struct flow_sink *sink, struct net_buf *buf, k_tim
 	return ret;
 }
 
-int flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout)
+static int _flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout)
 {
 	k_spinlock_key_t key;
 	struct flow_connection *conn;
 	int delivered = 0;
 	k_timepoint_t end = sys_timepoint_calc(timeout);
-
-	/* Validate parameters */
-	if (!src || !buf) {
-		return -EINVAL;
-	}
-
-	/* Stamp packet ID if source has one configured */
-	if (src->packet_id != FLOW_PACKET_ID_ANY) {
-		flow_packet_id_set(buf, src->packet_id);
-	}
 
 #ifdef CONFIG_FLOW_STATS
 	atomic_inc(&src->send_count);
@@ -138,16 +138,6 @@ int flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t t
 			continue;
 		}
 
-		/* Check packet ID filter */
-		if (sink->accept_id != FLOW_PACKET_ID_ANY) {
-			uint16_t packet_id;
-			flow_packet_id_get(buf, &packet_id);
-			/* Skip if packet ID doesn't match and packet isn't broadcast */
-			if (packet_id != sink->accept_id && packet_id != FLOW_PACKET_ID_ANY) {
-				continue;
-			}
-		}
-
 		/* Try delivering to this sink */
 		if (flow_sink_deliver(sink, buf, remaining) == 0) {
 			delivered++;
@@ -157,10 +147,37 @@ int flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t t
 	k_spin_unlock(&src->lock, key);
 
 #ifdef CONFIG_FLOW_STATS
-	atomic_add(&src->queued_total, delivered);
+	atomic_add(&src->delivery_count, delivered);
 #endif
 
 	return delivered;
+}
+int flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout)
+{
+	/* Validate parameters */
+	if (!src || !buf) {
+		return -EINVAL;
+	}
+
+	/* Stamp packet ID if source has one configured */
+	flow_packet_id_set(buf, src->packet_id);
+
+	return _flow_source_send(src, buf, timeout);
+}
+
+int flow_source_send_routed(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout,
+			    uint16_t packet_id)
+{
+
+	/* Validate parameters */
+	if (!src || !buf) {
+		return -EINVAL;
+	}
+
+	/* Stamp packet ID if source has one configured */
+	flow_packet_id_set(buf, packet_id);
+
+	return _flow_source_send(src, buf, timeout);
 }
 
 int flow_source_send_consume(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout)
@@ -188,7 +205,7 @@ int flow_source_send_consume(struct flow_source *src, struct net_buf *buf, k_tim
 }
 
 #ifdef CONFIG_FLOW_STATS
-void flow_source_get_stats(struct flow_source *src, uint32_t *send_count, uint32_t *queued_total)
+void flow_source_get_stats(struct flow_source *src, uint32_t *send_count, uint32_t *delivery_count)
 {
 	if (!src) {
 		return;
@@ -197,8 +214,8 @@ void flow_source_get_stats(struct flow_source *src, uint32_t *send_count, uint32
 	if (send_count) {
 		*send_count = atomic_get(&src->send_count);
 	}
-	if (queued_total) {
-		*queued_total = atomic_get(&src->queued_total);
+	if (delivery_count) {
+		*delivery_count = atomic_get(&src->delivery_count);
 	}
 }
 
@@ -223,7 +240,7 @@ void flow_source_reset_stats(struct flow_source *src)
 	}
 
 	atomic_clear(&src->send_count);
-	atomic_clear(&src->queued_total);
+	atomic_clear(&src->delivery_count);
 }
 
 void flow_sink_reset_stats(struct flow_sink *sink)
@@ -238,31 +255,22 @@ void flow_sink_reset_stats(struct flow_sink *sink)
 #endif /* CONFIG_FLOW_STATS */
 
 /* Process a single event from a packet event queue */
-int flow_event_process(struct flow_event_queue *queue, k_timeout_t timeout)
+int flow_event_process(struct k_msgq *queue, k_timeout_t timeout)
 {
 	struct flow_event event;
 	int ret;
 
-	if (!queue || !queue->msgq) {
+	if (!queue || !queue) {
 		return -EINVAL;
 	}
 
-	ret = k_msgq_get(queue->msgq, &event, timeout);
+	ret = k_msgq_get(queue, &event, timeout);
 	if (ret != 0) {
 		return -EAGAIN; /* No event available */
 	}
 
 	/* Execute the handler using the common helper */
-	ret = execute_handler(event.sink, event.buf);
-	if (ret == 0) {
-#ifdef CONFIG_FLOW_STATS
-		/* Only need to update queue stats, sink stats are handled in
-		 * execute_handler */
-		atomic_inc(&queue->processed_count);
-#endif
-	}
-
-	return ret;
+	return flow_event_handler(event.sink, event.buf);
 }
 
 static int flow_init(void)
