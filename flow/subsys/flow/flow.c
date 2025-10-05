@@ -69,10 +69,11 @@ int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t t
 
 	struct net_buf *ref = net_buf_ref(buf); /* Reference for the sink */
 
-	if (sink->mode == SINK_MODE_IMMEDIATE) {
-		/* Execute handler immediately in source context */
+	switch (sink->mode) {
+	case SINK_MODE_IMMEDIATE:
 		ret = flow_event_handler(sink, ref);
-	} else if (sink->mode == SINK_MODE_QUEUED) {
+		break;
+	case SINK_MODE_QUEUED:
 		/* Queue packet event for later processing */
 		if (!sink->msgq) {
 			net_buf_unref(ref);
@@ -95,12 +96,12 @@ int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t t
 				return -ENOBUFS;
 			}
 		}
-	} else {
+		break;
+	default:
 		/* Unsupported mode */
 		net_buf_unref(ref);
 		return -ENOTSUP;
 	}
-
 	return ret;
 }
 
