@@ -108,15 +108,14 @@ Packet Distribution Process
 When a source sends a packet, the following sequence occurs:
 
 1. **Lock acquisition**: The source's connection list is protected by a spinlock
-2. **Packet ID stamping** (if configured): Source stamps its packet ID in the buffer's user data
-3. **Distribution**: For each connected sink:
+2. **Distribution**: For each connected sink:
    * **Packet ID filtering**: Skip sink if packet ID doesn't match sink's accept_id
    * **Immediate mode**: Handler executes immediately in source context
    * **Queued mode**: Packet event is queued for later processing
    * On success: increment buffer reference count
    * On queue failure: drop and count
-4. **Lock release**: Spinlock is released
-5. **Reference handling**:
+3. **Lock release**: Spinlock is released
+4. **Reference handling**:
 
    * ``flow_source_send``: Consumes caller's reference (default, safe behavior)
    * ``flow_source_send_ref``: Preserves caller's reference (for special cases)
@@ -163,8 +162,7 @@ Defining Sources and Sinks
 Sources
 -------
 
-A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURCE_DEFINE` or
-:c:macro:`FLOW_SOURCE_DEFINE_ROUTED` for packet ID stamping:
+A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURCE_DEFINE`:
 
 .. code-block:: c
 
@@ -173,17 +171,15 @@ A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURC
     /* Define buffer pool and sources */
     FLOW_BUF_POOL_DEFINE(sensor_pool, 10, 64, NULL);
 
-    /* Basic source - no packet ID stamping */
-    FLOW_SOURCE_DEFINE(basic_source);
-
-    /* Routed source - stamps packets with ID 0x1001 */
-    FLOW_SOURCE_DEFINE_ROUTED(sensor1_source, 0x1001);
-    FLOW_SOURCE_DEFINE_ROUTED(sensor2_source, 0x1002);
+    /* Define packet sources */
+    FLOW_SOURCE_DEFINE(sensor1_source);
+    FLOW_SOURCE_DEFINE(sensor2_source);
 
     void sensor_thread(void)
     {
         while (1) {
-            struct net_buf *buf = flow_buf_alloc(&sensor_pool, K_NO_WAIT);
+            /* Allocate buffer with runtime packet ID assignment */
+            struct net_buf *buf = flow_buf_alloc_with_id(&sensor_pool, 0x1001, K_NO_WAIT);
             if (!buf) {
                 k_sleep(K_MSEC(10));
                 continue;
@@ -194,7 +190,6 @@ A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURC
             memset(data, 0x42, 64);  /* Fill with sensor data */
 
             /* Send to all connected sinks - consume reference */
-            /* Routed sources automatically stamp packet ID */
             flow_source_send(&sensor1_source, buf, K_MSEC(100));
             /* No need to unref - flow_source_send consumes it */
 
@@ -235,8 +230,8 @@ or queue packets for deferred processing.
     /* Define immediate sink - accepts all packet IDs */
     FLOW_SINK_DEFINE_IMMEDIATE(logger_sink, logger_handler);
 
-    /* Define routed immediate sink - only accepts packet ID 0x1001 */
-    FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(sensor1_logger, logger_handler, 0x1001);
+    /* Define sink with packet ID filter - only accepts packet ID 0x1001 */
+    FLOW_SINK_DEFINE_FILTERED_IMMEDIATE(sensor1_logger, logger_handler, 0x1001);
 
 **Queued Mode Sink** (deferred processing):
 
@@ -248,9 +243,9 @@ or queue packets for deferred processing.
     /* Define queued sink - accepts all packet IDs */
     FLOW_SINK_DEFINE_QUEUED(processor_sink, logger_handler,  &processing_queue);
 
-    /* Define routed queued sink - only accepts packet ID 0x1002 */
-    FLOW_SINK_DEFINE_ROUTED_QUEUED(sensor2_processor, logger_handler,
-                                   processing_queue, 0x1002);
+    /* Define queued sink with packet ID filter - only accepts packet ID 0x1002 */
+    FLOW_SINK_DEFINE_FILTERED_QUEUED(sensor2_processor, logger_handler,
+                                      &processing_queue, 0x1002);
 
     /* Processing thread */
     void processor_thread(void)
@@ -530,20 +525,20 @@ A common pattern for distributing sensor data to multiple consumers:
 Packet ID Routing Pattern
 =========================
 
-The Flow system supports efficient packet routing using packet IDs. Sources can stamp packets
-with IDs, and sinks can filter to only accept specific IDs:
+The Flow system supports efficient packet routing using packet IDs. Buffers can be allocated
+with specific IDs, and sinks can filter to only accept specific IDs:
 
 .. code-block:: c
 
-    /* Define sources with packet IDs */
-    FLOW_SOURCE_DEFINE_ROUTED(temperature_source, 0x0001);
-    FLOW_SOURCE_DEFINE_ROUTED(humidity_source, 0x0002);
-    FLOW_SOURCE_DEFINE_ROUTED(pressure_source, 0x0003);
+    /* Define sources */
+    FLOW_SOURCE_DEFINE(temperature_source);
+    FLOW_SOURCE_DEFINE(humidity_source);
+    FLOW_SOURCE_DEFINE(pressure_source);
 
     /* Define sinks that filter by packet ID */
-    FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(temp_processor, handle_temperature, 0x0001);
-    FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(humid_processor, handle_humidity, 0x0002);
-    FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(press_processor, handle_pressure, 0x0003);
+    FLOW_SINK_DEFINE_FILTERED_IMMEDIATE(temp_processor, handle_temperature, 0x0001);
+    FLOW_SINK_DEFINE_FILTERED_IMMEDIATE(humid_processor, handle_humidity, 0x0002);
+    FLOW_SINK_DEFINE_FILTERED_IMMEDIATE(press_processor, handle_pressure, 0x0003);
 
     /* Universal sink that accepts all packet IDs */
     FLOW_SINK_DEFINE_IMMEDIATE(data_logger, log_all_sensors);
@@ -558,7 +553,11 @@ with IDs, and sinks can filter to only accept specific IDs:
     FLOW_CONNECT(&humidity_source, &data_logger);
     FLOW_CONNECT(&pressure_source, &data_logger);
 
-    /* Sending automatically stamps packet ID and routes to matching sinks */
+    /* Allocate buffer with specific packet ID for routing */
+    struct net_buf *temp_buf = flow_buf_alloc_with_id(&sensor_pool, 0x0001, K_NO_WAIT);
+    /* ... add temperature data to buffer ... */
+
+    /* Send - packet ID routes to matching sinks */
     flow_source_send(&temperature_source, temp_buf, K_NO_WAIT);
     /* Only temp_processor and data_logger receive this packet */
 

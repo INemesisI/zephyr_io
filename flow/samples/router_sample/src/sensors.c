@@ -16,9 +16,9 @@ LOG_MODULE_REGISTER(sensors, LOG_LEVEL_INF);
 /* Buffer pool for sensor packets */
 FLOW_BUF_POOL_DEFINE(sensor_pool, 8, 512, NULL);
 
-/* Define packet sources with unique packet IDs */
-FLOW_SOURCE_DEFINE_ROUTED(sensor1_source, SOURCE_ID_SENSOR1);
-FLOW_SOURCE_DEFINE_ROUTED(sensor2_source, SOURCE_ID_SENSOR2);
+/* Define packet sources */
+FLOW_SOURCE_DEFINE(sensor1_source);
+FLOW_SOURCE_DEFINE(sensor2_source);
 
 /* Sensor data patterns - simulating larger sensor payloads */
 static uint8_t sensor1_data[256]; /* 256 byte payload */

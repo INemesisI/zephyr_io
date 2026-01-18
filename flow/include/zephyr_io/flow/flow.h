@@ -118,9 +118,6 @@ struct flow_source {
 	/** Name of the source */
 	const char *name;
 #endif
-	/** Packet ID to stamp on outgoing packets (FLOW_PACKET_ID_ANY = don't stamp)
-	 */
-	uint8_t packet_id;
 	/** List of connections to sinks */
 	sys_slist_t connections;
 	/** Lock protecting the connection list */
@@ -209,14 +206,12 @@ struct flow_connection {
  * @brief Static initializer for packet source
  *
  * @param _name Name of the source (used for list initialization)
- * @param _id Packet ID to stamp on outgoing packets (FLOW_PACKET_ID_ANY for no
- * stamping)
  */
-#define FLOW_SOURCE_INITIALIZER(_name, _id)                                                        \
+#define FLOW_SOURCE_INITIALIZER(_name)                                                             \
 	{                                                                                          \
 		IF_ENABLED(CONFIG_FLOW_NAMES, (.name = #_name, ))                                  \
-			.packet_id = (_id),                                                        \
-		      .connections = SYS_SLIST_STATIC_INIT(&_name.connections), .lock = {},        \
+			.connections = SYS_SLIST_STATIC_INIT(&_name.connections),                  \
+		      .lock = {},                                                                  \
 		      IF_ENABLED(CONFIG_FLOW_STATS,                                                \
 				 (.send_count = ATOMIC_INIT(0), .delivery_count = ATOMIC_INIT(0))) \
 	}
@@ -254,8 +249,7 @@ struct flow_connection {
  *
  * @param _name Name of the source variable
  */
-#define FLOW_SOURCE_DEFINE(_name)                                                                  \
-	struct flow_source _name = FLOW_SOURCE_INITIALIZER(_name, FLOW_PACKET_ID_ANY);
+#define FLOW_SOURCE_DEFINE(_name) struct flow_source _name = FLOW_SOURCE_INITIALIZER(_name);
 
 /* -------------------- Sink Definitions -------------------- */
 
@@ -302,23 +296,10 @@ struct flow_connection {
 	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler, _queue,  \
 						       _data, FLOW_PACKET_ID_ANY)
 
-/* -------------------- Routed Source Definitions -------------------- */
+/* -------------------- Filtered Sink Definitions -------------------- */
 
 /**
- * @brief Define a routed packet source with specific packet ID
- *
- * This source stamps all outgoing packets with the specified packet ID.
- *
- * @param _name Name of the source variable
- * @param _id Packet ID to stamp on outgoing packets
- */
-#define FLOW_SOURCE_DEFINE_ROUTED(_name, _id)                                                      \
-	struct flow_source _name = FLOW_SOURCE_INITIALIZER(_name, _id)
-
-/* -------------------- Routed Sink Definitions -------------------- */
-
-/**
- * @brief Define a routed sink that accepts specific packet ID
+ * @brief Define a filtered sink that accepts specific packet ID
  *
  * This sink only processes packets with matching packet ID.
  *
@@ -327,19 +308,19 @@ struct flow_connection {
  * @param _id Packet ID to accept (or FLOW_PACKET_ID_ANY for all)
  * @param ... Optional user data (defaults to NULL)
  */
-#define FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(...)                                                     \
-	UTIL_CAT(Z_FLOW_SINK_ROUTED_IMMEDIATE_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+#define FLOW_SINK_DEFINE_FILTERED_IMMEDIATE(...)                                                   \
+	UTIL_CAT(Z_FLOW_SINK_FILTERED_IMMEDIATE_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
 
-#define Z_FLOW_SINK_ROUTED_IMMEDIATE_3(_name, _handler, _id)                                       \
+#define Z_FLOW_SINK_FILTERED_IMMEDIATE_3(_name, _handler, _id)                                     \
 	struct flow_sink _name =                                                                   \
 		FLOW_SINK_INITIALIZER(_name, SINK_MODE_IMMEDIATE, _handler, NULL, NULL, _id)
 
-#define Z_FLOW_SINK_ROUTED_IMMEDIATE_4(_name, _handler, _id, _data)                                \
+#define Z_FLOW_SINK_FILTERED_IMMEDIATE_4(_name, _handler, _id, _data)                              \
 	struct flow_sink _name =                                                                   \
 		FLOW_SINK_INITIALIZER(_name, SINK_MODE_IMMEDIATE, _handler, NULL, _data, _id)
 
 /**
- * @brief Define a routed queued sink with packet ID filter
+ * @brief Define a filtered queued sink with packet ID filter
  *
  * @param _name Name of the sink variable
  * @param _handler Handler function
@@ -347,14 +328,14 @@ struct flow_connection {
  * @param _id Packet ID to accept
  * @param ... Optional user data (defaults to NULL)
  */
-#define FLOW_SINK_DEFINE_ROUTED_QUEUED(...)                                                        \
-	UTIL_CAT(Z_FLOW_SINK_ROUTED_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
+#define FLOW_SINK_DEFINE_FILTERED_QUEUED(...)                                                      \
+	UTIL_CAT(Z_FLOW_SINK_FILTERED_QUEUED_, NUM_VA_ARGS(__VA_ARGS__))(__VA_ARGS__)
 
-#define Z_FLOW_SINK_ROUTED_QUEUED_4(_name, _handler, _queue, _id)                                  \
+#define Z_FLOW_SINK_FILTERED_QUEUED_4(_name, _handler, _queue, _id)                                \
 	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler,          \
 						       &(_queue##_msgq), NULL, _id)
 
-#define Z_FLOW_SINK_ROUTED_QUEUED_5(_name, _handler, _queue, _id, _data)                           \
+#define Z_FLOW_SINK_FILTERED_QUEUED_5(_name, _handler, _queue, _id, _data)                         \
 	struct flow_sink _name = FLOW_SINK_INITIALIZER(_name, SINK_MODE_QUEUED, _handler,          \
 						       &(_queue##_msgq), _data, _id)
 

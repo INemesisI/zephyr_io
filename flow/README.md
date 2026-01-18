@@ -94,8 +94,8 @@ K_THREAD_DEFINE(processor, 1024, processor_thread, NULL, NULL, NULL, 5, 0, 0);
 FLOW_SOURCE_DEFINE(data_source);
 
 // Define sinks that filter by specific packet IDs
-FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(type1_handler, process_type1, 0x01);
-FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(type2_handler, process_type2, 0x02);
+FLOW_SINK_DEFINE_FILTERED_IMMEDIATE(type1_handler, process_type1, 0x01);
+FLOW_SINK_DEFINE_FILTERED_IMMEDIATE(type2_handler, process_type2, 0x02);
 FLOW_SINK_DEFINE_IMMEDIATE(all_handler, process_all); // Accepts any ID
 
 // Connect source to all sinks - filtering happens at sink level
