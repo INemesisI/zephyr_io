@@ -962,3 +962,169 @@ ZTEST(flow_unit_test, test_packet_id_filtering)
 	zassert_equal(atomic_get(&((struct test_capture *)sink_routed_none.user_data)->count), 0,
 		      "sink_routed_none should not receive");
 }
+
+/* Test metadata API functions */
+ZTEST(flow_unit_test, test_metadata_api)
+{
+	struct net_buf *buf;
+	struct flow_buf_metadata *meta;
+	uint8_t packet_id;
+	int ret;
+
+	/* Test buffer allocation with metadata */
+	buf = flow_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "flow_buf_alloc failed");
+
+	/* Test getting metadata from buffer */
+	meta = flow_buf_get_meta(buf);
+	zassert_not_null(meta, "flow_buf_get_meta should return valid metadata");
+
+	/* Test initial packet ID is ANY */
+	ret = flow_buf_get_id(buf, &packet_id);
+	zassert_equal(ret, 0, "flow_buf_get_id should succeed");
+	zassert_equal(packet_id, FLOW_PACKET_ID_ANY, "Initial packet ID should be ANY");
+
+	/* Test setting packet ID */
+	ret = flow_buf_set_id(buf, 0x42);
+	zassert_equal(ret, 0, "flow_buf_set_id should succeed");
+
+	ret = flow_buf_get_id(buf, &packet_id);
+	zassert_equal(ret, 0, "flow_buf_get_id should succeed");
+	zassert_equal(packet_id, 0x42, "Packet ID should be 0x42");
+
+	/* Test timestamp API - using update_timestamp which exists */
+	flow_buf_update_timestamp(buf);
+	meta = flow_buf_get_meta(buf);
+	zassert_not_null(meta, "Should have metadata");
+	/* Timestamp should be non-zero after update */
+#ifdef CONFIG_FLOW_BUF_TIMESTAMP_HIRES
+	zassert_true(meta->cycles > 0, "Timestamp cycles should be set");
+#else
+	zassert_true(meta->ticks > 0, "Timestamp ticks should be set");
+#endif
+
+	/* Test with NULL parameters */
+	ret = flow_buf_get_id(NULL, &packet_id);
+	zassert_equal(ret, -EINVAL, "flow_buf_get_id with NULL buffer should fail");
+
+	ret = flow_buf_get_id(buf, NULL);
+	zassert_equal(ret, -EINVAL, "flow_buf_get_id with NULL packet_id should fail");
+
+	ret = flow_buf_set_id(NULL, 0x42);
+	zassert_equal(ret, -EINVAL, "flow_buf_set_id with NULL buffer should fail");
+
+	net_buf_unref(buf);
+
+	/* Test flow_buf_alloc_with_id */
+	buf = flow_buf_alloc_with_id(&test_pool, 0x55, K_NO_WAIT);
+	zassert_not_null(buf, "flow_buf_alloc_with_id failed");
+
+	ret = flow_buf_get_id(buf, &packet_id);
+	zassert_equal(ret, 0, "flow_buf_get_id should succeed");
+	zassert_equal(packet_id, 0x55, "Packet ID should be 0x55");
+
+	net_buf_unref(buf);
+}
+
+/* Test packet ID validation in flow_source_send */
+ZTEST(flow_unit_test, test_packet_id_validation)
+{
+	struct net_buf *buf;
+	int ret;
+	uint8_t packet_id;
+
+	/* Use existing source_routed which has TEST_PACKET_ID_1 */
+	/* Temporarily set different packet IDs for testing */
+	uint8_t original_routed_id = source_routed.packet_id;
+	uint8_t original_any_id = source_any.packet_id;
+
+	/* Test 1: Buffer with matching packet ID - should succeed */
+	source_routed.packet_id = 0x10;
+	buf = flow_buf_alloc_with_id(&test_pool, 0x10, K_NO_WAIT);
+	zassert_not_null(buf, "Buffer allocation failed");
+	ret = flow_source_send(&source_routed, buf, K_NO_WAIT);
+	/* source_routed is connected to 3 sinks but only sink_any accepts all IDs */
+	zassert_equal(ret, 1, "Should succeed with matching packet ID");
+
+	/* Test 2: Buffer with mismatching packet ID - should fail */
+	buf = flow_buf_alloc_with_id(&test_pool, 0x20, K_NO_WAIT);
+	zassert_not_null(buf, "Buffer allocation failed");
+	ret = flow_source_send(&source_routed, buf, K_NO_WAIT);
+	zassert_equal(ret, -EINVAL, "Should fail with mismatching packet ID");
+	net_buf_unref(buf); /* Clean up since send failed */
+
+	/* Test 3: Buffer with ANY packet ID - should succeed and adopt source ID */
+	buf = flow_buf_alloc_with_id(&test_pool, FLOW_PACKET_ID_ANY, K_NO_WAIT);
+	zassert_not_null(buf, "Buffer allocation failed");
+	flow_buf_get_id(buf, &packet_id);
+	zassert_equal(packet_id, FLOW_PACKET_ID_ANY, "Buffer should have ANY ID");
+
+	/* Create a new reference to check ID after send */
+	struct net_buf *buf_ref = net_buf_ref(buf);
+	ret = flow_source_send_ref(&source_routed, buf_ref, K_NO_WAIT);
+	zassert_equal(ret, 1, "Should succeed with ANY packet ID");
+
+	flow_buf_get_id(buf_ref, &packet_id);
+	zassert_equal(packet_id, 0x10, "Buffer should adopt source's packet ID");
+	net_buf_unref(buf_ref);
+	net_buf_unref(buf);
+
+	/* Test 4: Source with ANY packet ID - should accept any buffer */
+	buf = flow_buf_alloc_with_id(&test_pool, 0x99, K_NO_WAIT);
+	zassert_not_null(buf, "Buffer allocation failed");
+	ret = flow_source_send(&source_any, buf, K_NO_WAIT);
+	zassert_equal(ret, 1, "Source with ANY should accept any packet ID");
+
+	/* Test 5: Buffer allocated with flow_buf_alloc starts with ANY ID */
+	buf = flow_buf_alloc(&test_pool, K_NO_WAIT);
+	zassert_not_null(buf, "Buffer allocation failed");
+
+	flow_buf_get_id(buf, &packet_id);
+	zassert_equal(packet_id, FLOW_PACKET_ID_ANY, "New buffer should have ANY ID");
+
+	/* Should succeed and stamp the source's packet ID */
+	ret = flow_source_send(&source_routed, buf, K_NO_WAIT);
+	zassert_equal(ret, 1, "Should succeed with ANY packet ID buffer");
+
+	/* Restore original packet IDs */
+	source_routed.packet_id = original_routed_id;
+	source_any.packet_id = original_any_id;
+
+	/* Clean up captures */
+	reset_all_captures();
+}
+
+/* Test packet ID validation with flow_source_send_ref */
+ZTEST(flow_unit_test, test_packet_id_validation_ref)
+{
+	struct net_buf *buf;
+	int ret;
+
+	/* Use existing sources and temporarily modify their packet IDs */
+	uint8_t original_source0_id = sources[0].packet_id;
+	uint8_t original_source1_id = sources[1].packet_id;
+
+	sources[0].packet_id = 0x30;
+	sources[1].packet_id = 0x40;
+
+	/* Test with flow_source_send_ref - mismatch should fail */
+	buf = flow_buf_alloc_with_id(&test_pool, 0x30, K_NO_WAIT);
+	zassert_not_null(buf, "Buffer allocation failed");
+
+	/* This should fail because buffer has ID 0x30 but source has ID 0x40 */
+	ret = flow_source_send_ref(&sources[1], buf, K_NO_WAIT);
+	zassert_equal(ret, -EINVAL, "Should fail with mismatching packet ID in send_ref");
+
+	/* This should succeed because IDs match */
+	ret = flow_source_send_ref(&sources[0], buf, K_NO_WAIT);
+	zassert_equal(ret, 3, "Should succeed with matching packet ID in send_ref");
+
+	net_buf_unref(buf);
+
+	/* Restore original packet IDs */
+	sources[0].packet_id = original_source0_id;
+	sources[1].packet_id = original_source1_id;
+
+	/* Clean up captures */
+	reset_all_captures();
+}

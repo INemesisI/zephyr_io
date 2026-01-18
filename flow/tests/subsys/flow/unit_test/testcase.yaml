@@ -13,3 +13,11 @@ tests:
     harness: ztest
     extra_configs:
       - CONFIG_FLOW_STATS=n
+  flow.unit_test.hires_timestamp:
+    tags: flow unit_test hires_timestamp
+    integration_platforms:
+      - native_sim
+      - qemu_cortex_m3
+    harness: ztest
+    extra_configs:
+      - CONFIG_FLOW_BUF_TIMESTAMP_HIRES=y

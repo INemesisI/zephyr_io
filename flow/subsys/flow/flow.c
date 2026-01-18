@@ -165,6 +165,27 @@ static int _flow_source_send(struct flow_source *src, struct net_buf *buf, k_tim
 	struct flow_connection *conn;
 	int delivered = 0;
 	k_timepoint_t end = sys_timepoint_calc(timeout);
+	uint8_t existing_id;
+
+	/* Check if buffer already has a packet ID and validate consistency */
+	if (flow_buf_get_id(buf, &existing_id) == 0) {
+		/* Buffer has metadata and an existing ID */
+		if (existing_id != FLOW_PACKET_ID_ANY && src->packet_id != FLOW_PACKET_ID_ANY &&
+		    existing_id != src->packet_id) {
+			/* Mismatch: buffer has specific ID that differs from source ID */
+			LOG_ERR("Packet ID mismatch: buffer has %d, source has %d", existing_id,
+				src->packet_id);
+			return -EINVAL;
+		}
+		/* If buffer has ANY or matches source, we can proceed */
+		if (src->packet_id != FLOW_PACKET_ID_ANY) {
+			/* Override ANY with source's specific ID */
+			flow_buf_set_id(buf, src->packet_id);
+		}
+	} else {
+		/* No metadata yet, stamp packet ID if source has one configured */
+		flow_buf_set_id(buf, src->packet_id);
+	}
 
 #ifdef CONFIG_FLOW_STATS
 	atomic_inc(&src->send_count);
@@ -202,9 +223,6 @@ int flow_source_send_ref(struct flow_source *src, struct net_buf *buf_ref, k_tim
 	if (!src || !buf_ref) {
 		return -EINVAL;
 	}
-
-	/* Stamp packet ID if source has one configured */
-	flow_buf_set_id(buf_ref, src->packet_id);
 
 	return _flow_source_send(src, buf_ref, timeout);
 }
