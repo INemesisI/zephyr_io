@@ -26,6 +26,7 @@ __pycache__/
 *.swo
 *~
 .DS_Store
+.clang-format
 
 # Logs and temporary files
 *.log
