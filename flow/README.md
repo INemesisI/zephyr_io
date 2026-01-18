@@ -22,72 +22,97 @@ Flow (Fast Lightweight Object Wiring) is a high-performance, thread-safe, zero-c
 - Zephyr RTOS v3.7.1+
 - West build tool
 
-### Basic Usage
+### Simple Example
 
 ```c
 #include <zephyr_io/flow/flow.h>
 
-// Define a Flow IO source
-FLOW_SOURCE_DEFINE(data_source);
+// 1. Define a buffer pool for packet allocation
+FLOW_BUF_POOL_DEFINE(sensor_pool, 16, 128, NULL);  // 16 buffers, 128 bytes each
 
-// Flow IO sink handler function for processing packets
-void process_handler(struct flow_sink *sink, struct net_buf *buf_ref)
+// 2. Define a packet source (producer)
+FLOW_SOURCE_DEFINE(sensor_source);
+
+// 3. Define a handler function to process packets
+void log_handler(struct flow_sink *sink, struct net_buf *buf_ref)
 {
     LOG_INF("Received %d bytes", buf_ref->len);
-    // buf_ref is a borrowed reference - DO NOT call net_buf_unref()
-    // If you need to keep the buffer, call net_buf_ref(buf_ref)
 }
 
-// Define immediate execution sink (runs in source thread context)
-FLOW_SINK_DEFINE_IMMEDIATE(immediate_sink, process_handler);
+// 4. Define a sink (consumer) with the handler
+FLOW_SINK_DEFINE_IMMEDIATE(log_sink, log_handler);
 
-// Or define Flow IO event queue sink for deferred processing in another thread
-FLOW_EVENT_QUEUE_DEFINE(udp_queue, 32);  // 32 events max
-FLOW_SINK_DEFINE_QUEUED(queued_sink, process_handler,  &udp_queue);
+// 5. Connect source to sink at compile time
+FLOW_CONNECT(&sensor_source, &log_sink);
 
-// Wire connections
-FLOW_CONNECT(&data_source, &immediate_sink);
-FLOW_CONNECT(&data_source, &queued_sink);
+// 6. Send packets at runtime
+void send_sensor_data(void)
+{
+    struct net_buf *buf = flow_buf_alloc(&sensor_pool, K_NO_WAIT);
+    if (buf) {
+        net_buf_add_mem(buf, sensor_data, sizeof(sensor_data));
+        flow_source_send(&sensor_source, buf, K_NO_WAIT);
+    }
+}
+```
 
-// Send packets (runtime) - consumes the buffer reference
-flow_source_send(&data_source, buf, K_MSEC(100));
-// Do NOT call net_buf_unref(buf) after - flow_source_send consumes it
+### Deferred Processing with Event Queues
+
+For processing packets in a separate thread, use queued sinks:
+
+```c
+// Define an event queue for deferred processing
+FLOW_EVENT_QUEUE_DEFINE(process_queue, 32);  // Max 32 events
+
+// Handler function
+void process_handler(struct flow_sink *sink, struct net_buf *buf_ref)
+{
+    LOG_INF("Processing %d bytes in worker thread", buf_ref->len);
+}
+
+// Define a queued sink (handler runs in processor thread)
+FLOW_SINK_DEFINE_QUEUED(queued_sink, process_handler, &process_queue);
+
+// Connect source to queued sink
+FLOW_CONNECT(&sensor_source, &queued_sink);
+
+// Processing thread
+void processor_thread(void)
+{
+    while (1) {
+        // Process one event from the queue (blocks until available)
+        flow_event_process(&process_queue, K_FOREVER);
+    }
+}
+K_THREAD_DEFINE(processor, 1024, processor_thread, NULL, NULL, NULL, 5, 0, 0);
 ```
 
 ### Packet ID Routing
 
 ```c
-// Define routed sources with specific packet IDs
-FLOW_SOURCE_DEFINE_ROUTED(sensor1_source, 0x1001);
-FLOW_SOURCE_DEFINE_ROUTED(sensor2_source, 0x1002);
+// Define a single source that accepts any packet ID
+FLOW_SOURCE_DEFINE(data_source);
 
-// Define routed sinks that filter by packet ID
-FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(sensor1_processor, handle_sensor1, 0x1001);
-FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(sensor2_processor, handle_sensor2, 0x1002);
-FLOW_SINK_DEFINE_IMMEDIATE(all_sensors, handle_any_sensor); // Accepts all IDs
+// Define sinks that filter by specific packet IDs
+FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(type1_handler, process_type1, 0x01);
+FLOW_SINK_DEFINE_ROUTED_IMMEDIATE(type2_handler, process_type2, 0x02);
+FLOW_SINK_DEFINE_IMMEDIATE(all_handler, process_all); // Accepts any ID
 
-// Connect sources to sinks - filtering happens automatically
-FLOW_CONNECT(&sensor1_source, &sensor1_processor);  // Only 0x1001 packets
-FLOW_CONNECT(&sensor2_source, &sensor2_processor);  // Only 0x1002 packets
-FLOW_CONNECT(&sensor1_source, &all_sensors);        // Accepts any ID
-FLOW_CONNECT(&sensor2_source, &all_sensors);        // Accepts any ID
+// Connect source to all sinks - filtering happens at sink level
+FLOW_CONNECT(&data_source, &type1_handler);
+FLOW_CONNECT(&data_source, &type2_handler);
+FLOW_CONNECT(&data_source, &all_handler);
 
-// Packets are automatically stamped with source's ID and filtered at sinks
-flow_source_send(&sensor1_source, buf, K_NO_WAIT);  // Stamped with 0x1001, buffer consumed
-```
-
-### Processing Thread for Queued Sinks
-
-```c
-// Processing thread for queued events
-void processor_thread(void)
+// Send packets with different IDs at runtime
+void send_typed_data(uint8_t packet_type, void *data, size_t len)
 {
-    while (1) {
-        // Process events from the queue (will call the handler on event)
-        int ret = flow_event_process(&queued_sink, K_FOREVER);
-        if (ret != 0) {
-            LOG_ERR("Failed to process event: %d", ret);
-        }
+    struct net_buf *buf = flow_buf_alloc_with_id(&pool, packet_type, K_NO_WAIT);
+    if (buf) {
+        net_buf_add_mem(buf, data, len);
+        flow_source_send(&data_source, buf, K_NO_WAIT);
+        // type1_handler receives only if packet_type == 0x01
+        // type2_handler receives only if packet_type == 0x02
+        // all_handler receives all packets regardless of type
     }
 }
 ```

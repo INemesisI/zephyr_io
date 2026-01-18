@@ -41,18 +41,12 @@ Data Flow:
                                      │   sampling  │
                                      └─────────────┘
 
-Protocol Header Format (14 bytes):
-┌──────────┬──────────┬─────────┬───────────────┬──────────────┐
-│ PacketID │ Reserved │ Counter │ ContentLength │ TimestampNS  │
-│ (1 byte) │ (1 byte) │(2 bytes)│   (2 bytes)   │  (8 bytes)   │
-└──────────┴──────────┴─────────┴───────────────┴──────────────┘
 ```
 
 ## Features
 
 - **TCP Server**: Listens on port 4242 for client connections
 - **Remote Control**: Start/stop sensor sampling via TCP commands
-- **High-Resolution Timestamps**: 64-bit nanosecond timestamps in packet headers
 - **Zero-Copy Distribution**: Uses Flow framework's efficient buffer management
 - **Metadata Propagation**: Packet ID, counter, and timestamp metadata
 - **Python Client**: Interactive CLI and library for testing
@@ -61,16 +55,13 @@ Protocol Header Format (14 bytes):
 
 ### Build the Sample
 ```bash
-# From the Zephyr workspace root
-cd /home/beliasson/projects/zephyr_io
-
 # Build for native simulator with offloaded sockets
 ZEPHYR_EXTRA_MODULES=$PWD/flow \
   .venv/bin/west build -p always -b native_sim \
-  -d build_router flow/samples/router_sample
+  flow/samples/router_sample
 
 # Run the sample
-./build_router/zephyr/zephyr.exe
+./build/zephyr/zephyr.exe
 ```
 
 ### Connect with Python Client
@@ -121,22 +112,6 @@ Started sampling
   Timestamp: 1334.000 ms
   Size: 384 bytes
   Data: b2 b2 b2 b2 b2 b2 b2 b2 b2 b2 b2 b2 b2 b2 b2 b2...
-```
-
-## Configuration
-
-Key configuration options in `prj.conf`:
-
-```conf
-# Flow subsystem
-CONFIG_FLOW=y
-CONFIG_FLOW_BUF_TIMESTAMP_HIRES=y   # 64-bit timestamps
-
-# Networking
-CONFIG_NET_TCP=y
-CONFIG_NET_SOCKETS=y
-CONFIG_NET_SOCKETS_OFFLOAD=y        # Use host sockets for native_sim
-CONFIG_NET_NATIVE_OFFLOADED_SOCKETS=y
 ```
 
 ## Testing
@@ -196,18 +171,6 @@ Ensure `CONFIG_NET_NATIVE_OFFLOADED_SOCKETS=y` is set for native_sim to use host
 - Check that sampling is started (send command 0x01)
 - Verify TCP connection is established
 - Check sensor threads are running
-
-## Extending the Sample
-
-### Adding New Commands
-1. Define command in `tcp_server.h`
-2. Add handler case in `cmd_handler.c`
-3. Update Python client with new command
-
-### Adding More Sensors
-1. Create new source in `sensors.c`
-2. Connect to protocol sink in `main.c`
-3. Update packet ID handling as needed
 
 ## Further Reading
 
