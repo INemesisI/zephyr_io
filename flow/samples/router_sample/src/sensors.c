@@ -54,6 +54,12 @@ static void sensor_thread_fn(void *p1, void *p2, void *p3)
 
 	LOG_INF("Sensor module started (256B + 384B payloads)");
 
+#ifdef CONFIG_ROUTER_AUTO_START_SAMPLING
+	/* Automatically start sampling if configured */
+	sensor_start_sampling();
+	LOG_INF("Sampling started automatically");
+#endif
+
 	while (1) {
 		/* Check if sampling is enabled (non-blocking) */
 		if (k_sem_count_get(&sampling_sem) > 0) {

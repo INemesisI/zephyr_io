@@ -8,3 +8,5 @@ tests:
       - flow
       - tcp
       - samples
+    extra_configs:
+      - CONFIG_ROUTER_AUTO_START_SAMPLING=n
