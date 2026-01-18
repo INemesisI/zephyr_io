@@ -13,6 +13,48 @@
 
 LOG_MODULE_REGISTER(flow, CONFIG_FLOW_LOG_LEVEL);
 
+/* ============================ Buffer Allocation ============================ */
+
+struct net_buf *flow_buf_alloc(struct flow_buf_pool *pool, k_timeout_t timeout)
+{
+	if (!pool) {
+		return NULL;
+	}
+
+	struct net_buf *buf = net_buf_alloc(pool->pool, timeout);
+
+	if (!buf) {
+		return NULL;
+	}
+
+	/* Initialize metadata */
+	struct flow_buf_metadata *meta = (struct flow_buf_metadata *)net_buf_user_data(buf);
+
+	meta->packet_id = FLOW_PACKET_ID_ANY;
+	meta->flags = 0;
+	meta->counter = (uint16_t)atomic_inc(&pool->counter); /* Auto-increment */
+#ifdef CONFIG_FLOW_BUF_TIMESTAMP_HIRES
+	meta->cycles = k_cycle_get_64();
+#else
+	meta->ticks = k_uptime_ticks();
+#endif
+
+	return buf;
+}
+
+struct net_buf *flow_buf_alloc_with_id(struct flow_buf_pool *pool, uint8_t packet_id,
+				       k_timeout_t timeout)
+{
+	struct net_buf *buf = flow_buf_alloc(pool, timeout);
+
+	if (buf) {
+		flow_buf_set_id(buf, packet_id);
+	}
+	return buf;
+}
+
+/* ============================ Flow Event Handling ============================ */
+
 /* Helper function to execute handler and manage buffer lifecycle */
 int flow_event_handler(struct flow_sink *sink, struct net_buf *buf)
 {
@@ -49,25 +91,26 @@ int flow_event_handler(struct flow_sink *sink, struct net_buf *buf)
 	return 0;
 }
 
-int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t timeout)
+int flow_sink_deliver_ref(struct flow_sink *sink, struct net_buf *buf_ref, k_timeout_t timeout)
 {
 	int ret = 0;
 
-	if (!sink || !buf || !sink->handler) {
+	if (!sink || !buf_ref || !sink->handler) {
 		return -EINVAL;
 	}
 
 	/* Check packet ID filter */
 	if (sink->accept_id != FLOW_PACKET_ID_ANY) {
-		uint16_t packet_id;
-		flow_packet_id_get(buf, &packet_id);
+		uint8_t packet_id = FLOW_PACKET_ID_ANY;
+
+		flow_buf_get_id(buf_ref, &packet_id);
 		/* Skip if packet ID doesn't match and packet isn't broadcast */
 		if (packet_id != sink->accept_id) {
 			return -ENOTSUP;
 		}
 	}
 
-	struct net_buf *ref = net_buf_ref(buf); /* Reference for the sink */
+	struct net_buf *ref = net_buf_ref(buf_ref); /* Reference for the sink */
 
 	switch (sink->mode) {
 	case SINK_MODE_IMMEDIATE:
@@ -105,13 +148,13 @@ int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t t
 	return ret;
 }
 
-int flow_sink_deliver_consume(struct flow_sink *sink, struct net_buf *buf, k_timeout_t timeout)
+int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t timeout)
 {
 	if (!buf) {
-		return flow_sink_deliver(sink, NULL, timeout);
+		return flow_sink_deliver_ref(sink, NULL, timeout);
 	}
 
-	int ret = flow_sink_deliver(sink, buf, timeout);
+	int ret = flow_sink_deliver_ref(sink, buf, timeout);
 	net_buf_unref(buf);
 	return ret;
 }
@@ -140,7 +183,7 @@ static int _flow_source_send(struct flow_source *src, struct net_buf *buf, k_tim
 		}
 
 		/* Try delivering to this sink */
-		if (flow_sink_deliver(sink, buf, remaining) == 0) {
+		if (flow_sink_deliver_ref(sink, buf, remaining) == 0) {
 			delivered++;
 		}
 	}
@@ -153,35 +196,20 @@ static int _flow_source_send(struct flow_source *src, struct net_buf *buf, k_tim
 
 	return delivered;
 }
+int flow_source_send_ref(struct flow_source *src, struct net_buf *buf_ref, k_timeout_t timeout)
+{
+	/* Validate parameters */
+	if (!src || !buf_ref) {
+		return -EINVAL;
+	}
+
+	/* Stamp packet ID if source has one configured */
+	flow_buf_set_id(buf_ref, src->packet_id);
+
+	return _flow_source_send(src, buf_ref, timeout);
+}
+
 int flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout)
-{
-	/* Validate parameters */
-	if (!src || !buf) {
-		return -EINVAL;
-	}
-
-	/* Stamp packet ID if source has one configured */
-	flow_packet_id_set(buf, src->packet_id);
-
-	return _flow_source_send(src, buf, timeout);
-}
-
-int flow_source_send_routed(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout,
-			    uint16_t packet_id)
-{
-
-	/* Validate parameters */
-	if (!src || !buf) {
-		return -EINVAL;
-	}
-
-	/* Stamp packet ID if source has one configured */
-	flow_packet_id_set(buf, packet_id);
-
-	return _flow_source_send(src, buf, timeout);
-}
-
-int flow_source_send_consume(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout)
 {
 	int ret;
 
@@ -196,8 +224,13 @@ int flow_source_send_consume(struct flow_source *src, struct net_buf *buf, k_tim
 		return -EINVAL;
 	}
 
+	/* Warn about potential leaks from high reference counts */
+	if (buf->ref > 10) {
+		LOG_WRN("Buffer has high reference count (%d) - possible leak", buf->ref);
+	}
+
 	/* Call the non-consuming version */
-	ret = flow_source_send(src, buf, timeout);
+	ret = flow_source_send_ref(src, buf, timeout);
 
 	/* Consume the caller's reference */
 	net_buf_unref(buf);

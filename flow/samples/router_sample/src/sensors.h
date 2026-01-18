@@ -17,4 +17,8 @@
 FLOW_SOURCE_DECLARE(sensor1_source);
 FLOW_SOURCE_DECLARE(sensor2_source);
 
+/* Control functions */
+void sensor_start_sampling(void);
+void sensor_stop_sampling(void);
+
 #endif /* SENSORS_H */

@@ -2,12 +2,12 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(flow_basic_sample)
+project(flow_router_sample)
 
 target_sources(app PRIVATE
     src/main.c
     src/sensors.c
-    src/processor.c
-    src/echo.c
-    src/validator.c
+    src/protocol.c
+    src/tcp_server.c
+    src/cmd_handler.c
 )

@@ -23,7 +23,7 @@
 #define TEST_VALUE_3            0xDEADBEEF
 
 /* Define buffer pool for testing */
-NET_BUF_POOL_DEFINE(runtime_pool, TEST_BUFFER_POOL_SIZE, TEST_BUFFER_SIZE, 4, NULL);
+FLOW_BUF_POOL_DEFINE(runtime_pool, TEST_BUFFER_POOL_SIZE, TEST_BUFFER_SIZE, NULL);
 
 /* =============================================================================
  * Handler Buffer Management Rules:
@@ -54,15 +54,15 @@ FLOW_SOURCE_DEFINE(runtime_source);
 FLOW_SOURCE_DEFINE(runtime_source2);
 
 /* IMMEDIATE handler - processes synchronously (no unref needed) */
-static void runtime_immediate_handler(struct flow_sink *sink, struct net_buf *buf)
+static void runtime_immediate_handler(struct flow_sink *sink, struct net_buf *buf_ref)
 {
 	struct test_capture *capture = (struct test_capture *)sink->user_data;
 
 	if (capture) {
 		atomic_inc(&capture->count);
-		if (buf->len >= sizeof(uint32_t)) {
-			capture->last_value = net_buf_pull_le32(buf);
-			net_buf_push_le32(buf, capture->last_value);
+		if (buf_ref->len >= sizeof(uint32_t)) {
+			capture->last_value = net_buf_pull_le32(buf_ref);
+			net_buf_push_le32(buf_ref, capture->last_value);
 		}
 	}
 	/* Buffer unref handled by framework */
@@ -77,15 +77,15 @@ FLOW_SINK_DEFINE_IMMEDIATE(runtime_immediate_sink2, runtime_immediate_handler, &
 FLOW_EVENT_QUEUE_DEFINE(runtime_queue, TEST_RUNTIME_QUEUE_SIZE);
 
 /* QUEUED handler - processes asynchronously (no unref needed) */
-static void runtime_queued_handler(struct flow_sink *sink, struct net_buf *buf)
+static void runtime_queued_handler(struct flow_sink *sink, struct net_buf *buf_ref)
 {
 	struct test_capture *capture = (struct test_capture *)sink->user_data;
 
 	if (capture) {
 		atomic_inc(&capture->count);
-		if (buf->len >= sizeof(uint32_t)) {
-			capture->last_value = net_buf_pull_le32(buf);
-			net_buf_push_le32(buf, capture->last_value);
+		if (buf_ref->len >= sizeof(uint32_t)) {
+			capture->last_value = net_buf_pull_le32(buf_ref);
+			net_buf_push_le32(buf_ref, capture->last_value);
 		}
 	}
 	/* Buffer unref handled by framework */
@@ -133,14 +133,13 @@ static int send_test_packet(struct flow_source *source, uint32_t value)
 	struct net_buf *buf;
 	int ret;
 
-	buf = net_buf_alloc(&runtime_pool, K_NO_WAIT);
+	buf = flow_buf_alloc(&runtime_pool, K_NO_WAIT);
 	if (!buf) {
 		return -ENOMEM;
 	}
 
 	net_buf_add_le32(buf, value);
 	ret = flow_source_send(source, buf, K_NO_WAIT);
-	net_buf_unref(buf);
 
 	return ret;
 }

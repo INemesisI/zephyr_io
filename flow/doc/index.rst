@@ -52,14 +52,14 @@ Zero-Copy Operation
 The Flow system achieves zero-copy by using the reference counting mechanism of Zephyr's
 :c:struct:`net_buf`. When sending a packet to multiple sinks:
 
-1. The source calls :c:func:`flow_source_send` or :c:func:`flow_source_send_consume` with a network buffer
+1. The source calls :c:func:`flow_source_send` or :c:func:`flow_source_send_ref` with a network buffer
 2. For each sink, the buffer's reference count is incremented
-3. Each sink's handler receives a borrowed (non-owned) reference to the buffer
+3. Each sink's handler receives a borrowed (non-owned) reference to the buffer (buf_ref parameter)
 4. The framework automatically releases the reference after the handler completes - handlers must NOT call unref
 
 This eliminates memory copies entirely, making it ideal for high-throughput packet processing.
-The ``send_consume`` variant is more convenient when the caller is done with the buffer,
-as it transfers ownership to the framework instead of keeping a reference.
+The default ``flow_source_send`` function consumes the caller's reference, while ``flow_source_send_ref``
+preserves it for cases where the caller needs to continue using the buffer.
 
 Connection Wiring
 -----------------
@@ -118,8 +118,8 @@ When a source sends a packet, the following sequence occurs:
 4. **Lock release**: Spinlock is released
 5. **Reference handling**:
 
-   * ``flow_source_send``: Caller retains their reference
-   * ``flow_source_send_consume``: Caller's reference is consumed
+   * ``flow_source_send``: Consumes caller's reference (default, safe behavior)
+   * ``flow_source_send_ref``: Preserves caller's reference (for special cases)
 
 .. note::
    For immediate mode sinks, the handler executes in the context of the sending thread.
@@ -140,7 +140,7 @@ The Flow system provides a handler-based API with flexible execution modes:
     FLOW_SOURCE_DEFINE(my_source);
 
     /* Handler function for processing packets */
-    void my_handler(struct flow_sink *sink, struct net_buf *buf);
+    void my_handler(struct flow_sink *sink, struct net_buf *buf_ref);
 
     /* Define immediate execution sink (runs in source context) */
     FLOW_SINK_DEFINE_IMMEDIATE(my_sink_immediate, my_handler);
@@ -154,8 +154,8 @@ The Flow system provides a handler-based API with flexible execution modes:
     FLOW_CONNECT(&my_source, &my_sink_queued);
 
     /* Send packet at runtime */
-    flow_source_send(&my_source, buf, K_NO_WAIT);           /* Preserve reference */
-    flow_source_send_consume(&my_source, buf2, K_MSEC(100)); /* Consume reference */
+    flow_source_send(&my_source, buf, K_NO_WAIT);           /* Consume reference */
+    flow_source_send_ref(&my_source, buf2, K_MSEC(100));    /* Preserve reference */
 
 Defining Sources and Sinks
 ==========================
@@ -171,7 +171,7 @@ A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURC
     #include <zephyr_io/flow/flow.h>
 
     /* Define buffer pool and sources */
-    NET_BUF_POOL_DEFINE(sensor_pool, 10, 64, 4, NULL);
+    FLOW_BUF_POOL_DEFINE(sensor_pool, 10, 64, NULL);
 
     /* Basic source - no packet ID stamping */
     FLOW_SOURCE_DEFINE(basic_source);
@@ -183,7 +183,7 @@ A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURC
     void sensor_thread(void)
     {
         while (1) {
-            struct net_buf *buf = net_buf_alloc(&sensor_pool, K_NO_WAIT);
+            struct net_buf *buf = flow_buf_alloc(&sensor_pool, K_NO_WAIT);
             if (!buf) {
                 k_sleep(K_MSEC(10));
                 continue;
@@ -195,8 +195,8 @@ A source represents a packet producer. Define sources using :c:macro:`FLOW_SOURC
 
             /* Send to all connected sinks - consume reference */
             /* Routed sources automatically stamp packet ID */
-            flow_source_send_consume(&sensor1_source, buf, K_MSEC(100));
-            /* No need to unref - send_consume handles it */
+            flow_source_send(&sensor1_source, buf, K_MSEC(100));
+            /* No need to unref - flow_source_send consumes it */
 
             k_sleep(K_MSEC(100));
         }
@@ -225,10 +225,10 @@ or queue packets for deferred processing.
     #include <zephyr_io/flow/flow.h>
 
     /* Handler function */
-    void logger_handler(struct flow_sink *sink, struct net_buf *buf)
+    void logger_handler(struct flow_sink *sink, struct net_buf *buf_ref)
     {
-        LOG_INF("Received %d bytes", buf->len);
-        process_packet(buf->data, buf->len);
+        LOG_INF("Received %d bytes", buf_ref->len);
+        process_packet(buf_ref->data, buf_ref->len);
         /* Buffer is borrowed, unref is handled automatically */
     }
 
@@ -349,10 +349,10 @@ Packet event queues can be integrated with :c:func:`k_poll` for efficient event-
     /* Define packet event queue and sinks */
     FLOW_EVENT_QUEUE_DEFINE(processing_queue, 32);
 
-    void process_handler(struct flow_sink *sink, struct net_buf *buf)
+    void process_handler(struct flow_sink *sink, struct net_buf *buf_ref)
     {
         uint32_t id = (uint32_t)sink->user_data;
-        LOG_INF("Processor %d: %d bytes", id, buf->len);
+        LOG_INF("Processor %d: %d bytes", id, buf_ref->len);
         process_packet(buf);
         /* Buffer is borrowed, unref is handled automatically */
     }
@@ -414,21 +414,21 @@ Example showing how a processor adds headers by chaining buffers:
     FLOW_SINK_DEFINE_IMMEDIATE(processor_input, processor_handler);
     FLOW_SOURCE_DEFINE(processor_output);
 
-    NET_BUF_POOL_DEFINE(header_pool, 10, 8, 4, NULL);  /* For 8-byte headers */
+    FLOW_BUF_POOL_DEFINE(header_pool, 10, 8, NULL);  /* For 8-byte headers */
 
     void processor_handler(struct flow_sink *sink, struct net_buf *data_buf)
     {
         struct net_buf *header_buf;
 
         /* Allocate header buffer */
-        header_buf = net_buf_alloc(&header_pool, K_NO_WAIT);
+        header_buf = flow_buf_alloc(&header_pool, K_NO_WAIT);
         if (!header_buf) {
             return;  /* Drop on allocation failure */
         }
 
         /* Add 8-byte protocol header */
         net_buf_add_le32(header_buf, 0x12345678);  /* Magic number */
-        net_buf_add_le32(header_buf, data_buf->len);  /* Payload length */
+        net_buf_add_le32(header_buf, data_buf_ref->len);  /* Payload length */
 
         /* Chain original data after header - zero copy! */
         /* CRITICAL: Add ref before chaining since handler doesn't own data_buf
@@ -437,8 +437,8 @@ Example showing how a processor adds headers by chaining buffers:
         net_buf_frag_add(header_buf, data_buf);
 
         /* Forward complete packet (header + data) */
-        flow_source_send_consume(&processor_output, header_buf, K_NO_WAIT);
-        /* Input buffer is borrowed, unref is handled automatically */
+        flow_source_send(&processor_output, header_buf, K_NO_WAIT);
+        /* header_buf reference is consumed, input buffer is borrowed */
     }
 
 Statistics and Monitoring
@@ -483,20 +483,20 @@ A common pattern for distributing sensor data to multiple consumers:
 .. code-block:: c
 
     /* Handler functions */
-    void fusion_handler(struct flow_sink *sink, struct net_buf *buf)
+    void fusion_handler(struct flow_sink *sink, struct net_buf *buf_ref)
     {
         sensor_type_t type = identify_sensor(buf);
         update_fusion_state(type, buf);
         /* Buffer is borrowed, unref is handled automatically */
     }
 
-    void logger_handler(struct flow_sink *sink, struct net_buf *buf)
+    void logger_handler(struct flow_sink *sink, struct net_buf *buf_ref)
     {
         log_sensor_data(buf);
         /* Buffer is borrowed, unref is handled automatically */
     }
 
-    void network_handler(struct flow_sink *sink, struct net_buf *buf)
+    void network_handler(struct flow_sink *sink, struct net_buf *buf_ref)
     {
         upload_to_cloud(buf);
         /* Buffer is borrowed, unref is handled automatically */
@@ -594,10 +594,10 @@ Implementing a packet router that distributes based on packet type:
 .. code-block:: c
 
     /* Router handler */
-    void router_handler(struct flow_sink *sink, struct net_buf *buf)
+    void router_handler(struct flow_sink *sink, struct net_buf *buf_ref)
     {
         /* Route based on packet type */
-        switch (buf->data[0]) {
+        switch (buf_ref->data[0]) {
         case PROTO_TCP:
             flow_source_send(&tcp_output, buf, K_NO_WAIT);
             break;
@@ -649,10 +649,10 @@ Proper buffer pool configuration is critical for performance:
 .. code-block:: c
 
     /* Define pools for different packet sizes */
-    NET_BUF_POOL_DEFINE(small_pool, 128, 64, 4, NULL);    /* Control packets */
-    NET_BUF_POOL_DEFINE(medium_pool, 64, 512, 4, NULL);   /* Data packets */
-    NET_BUF_POOL_DEFINE(large_pool, 16, 1500, 4, NULL);   /* Ethernet frames */
-    NET_BUF_POOL_DEFINE(jumbo_pool, 4, 4096, 4, NULL);    /* Jumbo frames */
+    FLOW_BUF_POOL_DEFINE(small_pool, 128, 64, NULL);    /* Control packets */
+    FLOW_BUF_POOL_DEFINE(medium_pool, 64, 512, NULL);   /* Data packets */
+    FLOW_BUF_POOL_DEFINE(large_pool, 16, 1500, NULL);   /* Ethernet frames */
+    FLOW_BUF_POOL_DEFINE(jumbo_pool, 4, 4096, NULL);    /* Jumbo frames */
 
 
 ISR Usage
@@ -663,7 +663,7 @@ The Flow system can be used from ISRs with proper sink configuration:
 .. code-block:: c
 
     /* ISR-safe handler for immediate processing */
-    void event_handler(struct flow_sink *sink, struct net_buf *buf)
+    void event_handler(struct flow_sink *sink, struct net_buf *buf_ref)
     {
         /* Quick processing only - defer heavy work to thread context */
         atomic_inc(&packets_received);
@@ -671,12 +671,13 @@ The Flow system can be used from ISRs with proper sink configuration:
     }
 
     /* Use queued sink for ISR sources to defer processing */
+    FLOW_BUF_POOL_DEFINE(isr_pool, 32, 128, NULL);
     FLOW_EVENT_QUEUE_DEFINE(isr_queue, 128);
     FLOW_SINK_DEFINE_QUEUED(isr_sink, process_handler,  &isr_queue);
 
     void my_isr(void *arg)
     {
-        struct net_buf *buf = net_buf_alloc(&isr_pool, K_NO_WAIT);
+        struct net_buf *buf = flow_buf_alloc(&isr_pool, K_NO_WAIT);
         if (!buf)
             return;  /* Drop packet */
 
@@ -685,7 +686,7 @@ The Flow system can be used from ISRs with proper sink configuration:
         read_hardware_fifo(data, 64);
 
         /* Send with K_NO_WAIT in ISR context */
-        flow_source_send_consume(&isr_source, buf, K_NO_WAIT);
+        flow_source_send(&isr_source, buf, K_NO_WAIT);  /* Consumes buffer */
     }
 
 .. note::

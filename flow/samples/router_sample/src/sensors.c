@@ -13,8 +13,8 @@
 
 LOG_MODULE_REGISTER(sensors, LOG_LEVEL_INF);
 
-/* Sensor module's own buffer pool - larger for bigger packets */
-NET_BUF_POOL_DEFINE(sensor_pool, 8, 512, 4, NULL);
+/* Buffer pool for sensor packets */
+FLOW_BUF_POOL_DEFINE(sensor_pool, 8, 512, NULL);
 
 /* Define packet sources with unique packet IDs */
 FLOW_SOURCE_DEFINE_ROUTED(sensor1_source, SOURCE_ID_SENSOR1);
@@ -23,6 +23,9 @@ FLOW_SOURCE_DEFINE_ROUTED(sensor2_source, SOURCE_ID_SENSOR2);
 /* Sensor data patterns - simulating larger sensor payloads */
 static uint8_t sensor1_data[256]; /* 256 byte payload */
 static uint8_t sensor2_data[384]; /* 384 byte payload */
+
+/* Sampling control - using semaphore for thread-safe start/stop */
+K_SEM_DEFINE(sampling_sem, 0, 1); /* Start with sampling DISABLED */
 
 static void init_sensor_data(void)
 {
@@ -52,28 +55,44 @@ static void sensor_thread_fn(void *p1, void *p2, void *p3)
 	LOG_INF("Sensor module started (256B + 384B payloads)");
 
 	while (1) {
-		/* Sensor 1 packet - 256 bytes */
-		buf = net_buf_alloc(&sensor_pool, K_NO_WAIT);
-		if (buf) {
-			net_buf_add_mem(buf, sensor1_data, sizeof(sensor1_data));
-			ret = flow_source_send(&sensor1_source, buf, K_NO_WAIT);
-			LOG_DBG("Sensor 1 sent %d bytes to %d sinks", sizeof(sensor1_data), ret);
-			net_buf_unref(buf);
-		}
+		/* Check if sampling is enabled (non-blocking) */
+		if (k_sem_count_get(&sampling_sem) > 0) {
+			/* Sensor 1 packet - 256 bytes */
+			buf = flow_buf_alloc_with_id(&sensor_pool, SOURCE_ID_SENSOR1, K_NO_WAIT);
+			if (buf) {
+				net_buf_add_mem(buf, sensor1_data, sizeof(sensor1_data));
+				ret = flow_source_send(&sensor1_source, buf, K_NO_WAIT);
+				LOG_DBG("Sensor 1 sent %d bytes to %d sinks", sizeof(sensor1_data),
+					ret);
+			}
 
-		for (int i = 0; i < 2; i++) {
 			/* Sensor 2 packet - 384 bytes */
-			buf = net_buf_alloc(&sensor_pool, K_NO_WAIT);
+			buf = flow_buf_alloc_with_id(&sensor_pool, SOURCE_ID_SENSOR2, K_NO_WAIT);
 			if (buf) {
 				net_buf_add_mem(buf, sensor2_data, sizeof(sensor2_data));
-				ret = flow_source_send_consume(&sensor2_source, buf, K_NO_WAIT);
+				ret = flow_source_send(&sensor2_source, buf, K_NO_WAIT);
 				LOG_DBG("Sensor 2 sent %d bytes to %d sinks", sizeof(sensor2_data),
 					ret);
 			}
 
-			k_sleep(K_MSEC(500)); /* Faster data rate */
+			/* Sleep between packet generations */
+			k_sleep(K_MSEC(100)); /* Sample every 100ms for faster testing */
+		} else {
+			/* When sampling is disabled, sleep until enabled */
+			k_sleep(K_MSEC(100));
 		}
 	}
+}
+
+/* Control functions */
+void sensor_start_sampling(void)
+{
+	k_sem_give(&sampling_sem);
+}
+
+void sensor_stop_sampling(void)
+{
+	k_sem_reset(&sampling_sem);
 }
 
 /* Static thread initialization - starts automatically */

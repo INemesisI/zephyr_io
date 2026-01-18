@@ -1,0 +1,10 @@
+tests:
+  sample.flow.router_tcp:
+    harness: pytest
+    platform_allow: native_sim
+    integration_platforms:
+      - native_sim
+    tags:
+      - flow
+      - tcp
+      - samples

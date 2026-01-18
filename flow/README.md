@@ -31,10 +31,11 @@ Flow (Fast Lightweight Object Wiring) is a high-performance, thread-safe, zero-c
 FLOW_SOURCE_DEFINE(data_source);
 
 // Flow IO sink handler function for processing packets
-void process_handler(struct flow_sink *sink, struct net_buf *buf)
+void process_handler(struct flow_sink *sink, struct net_buf *buf_ref)
 {
-    LOG_INF("Received %d bytes", buf->len);
-    // Buffer is borrowed - DO NOT call net_buf_unref()
+    LOG_INF("Received %d bytes", buf_ref->len);
+    // buf_ref is a borrowed reference - DO NOT call net_buf_unref()
+    // If you need to keep the buffer, call net_buf_ref(buf_ref)
 }
 
 // Define immediate execution sink (runs in source thread context)
@@ -48,8 +49,9 @@ FLOW_SINK_DEFINE_QUEUED(queued_sink, process_handler,  &udp_queue);
 FLOW_CONNECT(&data_source, &immediate_sink);
 FLOW_CONNECT(&data_source, &queued_sink);
 
-// Send packets (runtime)
+// Send packets (runtime) - consumes the buffer reference
 flow_source_send(&data_source, buf, K_MSEC(100));
+// Do NOT call net_buf_unref(buf) after - flow_source_send consumes it
 ```
 
 ### Packet ID Routing
@@ -71,7 +73,7 @@ FLOW_CONNECT(&sensor1_source, &all_sensors);        // Accepts any ID
 FLOW_CONNECT(&sensor2_source, &all_sensors);        // Accepts any ID
 
 // Packets are automatically stamped with source's ID and filtered at sinks
-flow_source_send(&sensor1_source, buf, K_NO_WAIT);  // Stamped with 0x1001
+flow_source_send(&sensor1_source, buf, K_NO_WAIT);  // Stamped with 0x1001, buffer consumed
 ```
 
 ### Processing Thread for Queued Sinks
@@ -92,11 +94,11 @@ void processor_thread(void)
 
 ### Sample Application
 
-See `flow/samples/basic_packet_routing/` for a complete integration example demonstrating:
-- Multi-sensor data collection with packet ID-based routing
-- Zero-copy header addition in processor node
-- Echo service with packet loopback
-- Incoming packet validation
+See `flow/samples/router_sample/` for a complete integration example demonstrating:
+- TCP server with packet streaming
+- Protocol header addition/removal
+- Command processing pipeline
+- Multi-sensor data collection
 
 ## 🚧 Limitations
 

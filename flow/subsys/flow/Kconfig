@@ -25,6 +25,20 @@ config FLOW_STATS
 	  Enable statistics tracking for packet sources and sinks.
 	  This includes message counts, drop counts, and delivery counts.
 
+config FLOW_BUF_TIMESTAMP_HIRES
+	bool "Use 64-bit high-resolution timestamps in flow buffer metadata"
+	default n
+	help
+	  Use 64-bit cycle counter (k_cycle_get_64) instead of 32-bit ticks
+	  (k_uptime_ticks).
+
+	  32-bit: System ticks from k_uptime_ticks() - lower resolution, longer wraparound
+	  64-bit: CPU cycles from k_cycle_get_64() - maximum resolution, never wraps
+
+	  Applications convert to desired time units using k_ticks_to_*() or k_cyc_to_*().
+
+	  Metadata size: 8 bytes (32-bit) or 12 bytes (64-bit).
+
 config FLOW_RUNTIME_OBSERVERS
 	bool "Runtime observer registration"
 	help

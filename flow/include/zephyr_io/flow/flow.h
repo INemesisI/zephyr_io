@@ -39,18 +39,78 @@ extern "C" {
 struct flow_sink;
 
 /** @brief Special packet ID that matches any packet */
-#define FLOW_PACKET_ID_ANY 0xFFFF
+#define FLOW_PACKET_ID_ANY 0xFF
+
+/* ============================ Buffer Metadata ============================ */
+
+/**
+ * @brief Flow buffer metadata structure
+ *
+ * This structure is stored in the net_buf user_data area and contains
+ * flow-specific metadata for packet routing and tracking.
+ *
+ * @warning The flow library takes complete ownership of net_buf user_data.
+ *          Applications cannot use net_buf_user_data() on flow-managed buffers.
+ */
+struct flow_buf_metadata {
+	uint8_t packet_id; /**< Packet routing ID (255 = FLOW_PACKET_ID_ANY) */
+	uint8_t flags;     /**< Application-defined flags */
+	uint16_t counter;  /**< Auto-incrementing sequence counter per pool */
+#ifdef CONFIG_FLOW_BUF_TIMESTAMP_HIRES
+	uint64_t cycles; /**< CPU cycles (k_cycle_get_64) */
+#else
+	uint32_t ticks; /**< System ticks (k_uptime_ticks) */
+#endif
+} __packed;
+
+#define FLOW_BUF_METADATA_SIZE sizeof(struct flow_buf_metadata)
+
+/**
+ * @brief Flow buffer pool with auto-incrementing counter
+ *
+ * Wraps net_buf_pool with flow-specific state including atomic counter
+ * for auto-incrementing sequence numbers.
+ */
+struct flow_buf_pool {
+	struct net_buf_pool *pool; /**< Pointer to underlying Zephyr net_buf pool */
+	atomic_t counter;          /**< Atomic counter for sequence numbering */
+};
+
+/**
+ * @brief Define a flow buffer pool
+ *
+ * Creates a flow_buf_pool structure containing:
+ * - net_buf_pool with correct user_data size for metadata
+ * - Atomic counter initialized to 0 for auto-incrementing sequence numbers
+ *
+ * @param _name Pool variable name
+ * @param _count Number of buffers
+ * @param _size Buffer data size (bytes)
+ * @param _destroy Destructor callback or NULL
+ *
+ * Example:
+ *   FLOW_BUF_POOL_DEFINE(sensor_pool, 16, 512, NULL);
+ */
+#define FLOW_BUF_POOL_DEFINE(_name, _count, _size, _destroy)                                       \
+	NET_BUF_POOL_DEFINE(_net_buf_pool_##_name, _count, _size, FLOW_BUF_METADATA_SIZE,          \
+			    _destroy);                                                             \
+	static struct flow_buf_pool _name = {                                                      \
+		.pool = &_net_buf_pool_##_name,                                                    \
+		.counter = ATOMIC_INIT(0),                                                         \
+	}
 
 /**
  * @brief Flow IO handler callback signature
  *
- * @note The handler MUST NOT call net_buf_unref() on the buffer.
- *       The framework automatically manages buffer references.
+ * @note The handler receives a borrowed reference to the buffer.
+ *       The handler MUST NOT call net_buf_unref() on the buffer.
+ *       If the handler needs to keep the buffer, it must call
+ *       net_buf_ref() to take its own reference.
  *
  * @param sink The sink that received the packet
- * @param buf The packet buffer (do not unref)
+ * @param buf_ref The packet buffer reference (borrowed - do not unref)
  */
-typedef void (*flow_handler_t)(struct flow_sink *sink, struct net_buf *buf);
+typedef void (*flow_handler_t)(struct flow_sink *sink, struct net_buf *buf_ref);
 
 /** @brief Flow IO source structure */
 struct flow_source {
@@ -60,7 +120,7 @@ struct flow_source {
 #endif
 	/** Packet ID to stamp on outgoing packets (FLOW_PACKET_ID_ANY = don't stamp)
 	 */
-	uint16_t packet_id;
+	uint8_t packet_id;
 	/** List of connections to sinks */
 	sys_slist_t connections;
 	/** Lock protecting the connection list */
@@ -88,7 +148,7 @@ struct flow_sink {
 	const char *name;
 #endif
 	/** Packet ID to accept (FLOW_PACKET_ID_ANY = accept all) */
-	uint16_t accept_id;
+	uint8_t accept_id;
 	/** Execution mode */
 	enum {
 		SINK_MODE_IMMEDIATE, /**< Execute handler immediately in source context */
@@ -336,58 +396,14 @@ struct flow_connection {
 /* ============================ Function APIs ============================ */
 
 /**
- * @brief Send a packet from source to all connected sinks
- *
- * This function sends a net_buf packet to all sinks connected to the
- * source. The function does NOT consume the caller's reference.
- * Each successfully queued sink gets its own reference.
- *
- * The timeout represents the total time the send operation may take.
- * If a sink blocks and the timeout expires, remaining sinks are
- * attempted with K_NO_WAIT to ensure all sinks get a chance.
- *
- * @param src Pointer to the packet source
- * @param buf Pointer to the net_buf to send (reference is NOT consumed)
- * @param timeout Maximum time to wait for all sinks (K_NO_WAIT, K_FOREVER, or
- * timeout)
- *
- * @return Number of sinks that successfully received the packet
- */
-int flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout);
-
-/**
- * @brief Send a routed packet from source to all connected sinks
- *
- * This function sends a net_buf packet to all sinks connected to the
- * source, stamping the specified packet ID on the buffer. The function
- * does NOT consume the caller's reference. Each successfully queued
- * sink gets its own reference.
- *
- * The timeout represents the total time the send operation may take.
- * If a sink blocks and the timeout expires, remaining sinks are
- * attempted with K_NO_WAIT to ensure all sinks get a chance.
- *
- * @param src Pointer to the packet source
- * @param buf Pointer to the net_buf to send (reference is NOT consumed)
- * @param timeout Maximum time to wait for all sinks (K_NO_WAIT, K_FOREVER, or
- * timeout)
- * @param packet_id Packet ID to stamp on outgoing packets
- *
- * @return Number of sinks that successfully received the packet
- */
-int flow_source_send_routed(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout,
-			    uint16_t packet_id);
-
-/**
  * @brief Send a packet from source to all connected sinks (consuming reference)
  *
  * This function sends a net_buf packet to all sinks connected to the
  * source. The function CONSUMES the caller's reference to the buffer.
  * Each successfully queued sink gets its own reference.
  *
- * This is more efficient than flow_source_send() when the caller
- * doesn't need the buffer after sending, as it avoids an extra
- * ref/unref cycle.
+ * This is the recommended function for most use cases as it automatically
+ * manages the buffer reference, preventing memory leaks.
  *
  * The timeout represents the total time the send operation may take.
  * If a sink blocks and the timeout expires, remaining sinks are
@@ -400,7 +416,35 @@ int flow_source_send_routed(struct flow_source *src, struct net_buf *buf, k_time
  *
  * @return Number of sinks that successfully received the packet
  */
-int flow_source_send_consume(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout);
+int flow_source_send(struct flow_source *src, struct net_buf *buf, k_timeout_t timeout);
+
+/**
+ * @brief Send a packet from source to all connected sinks (preserving reference)
+ *
+ * This function sends a net_buf packet to all sinks connected to the
+ * source. The function does NOT consume the caller's reference.
+ * Each successfully queued sink gets its own reference.
+ *
+ * WARNING: The caller MUST call net_buf_unref() after this function
+ * to avoid memory leaks, unless they need to keep using the buffer
+ * (e.g., sending to multiple sources).
+ *
+ * Only use this function when you need to send the same buffer to
+ * multiple sources or continue using the buffer after sending.
+ * For normal use cases, use flow_source_send() instead.
+ *
+ * The timeout represents the total time the send operation may take.
+ * If a sink blocks and the timeout expires, remaining sinks are
+ * attempted with K_NO_WAIT to ensure all sinks get a chance.
+ *
+ * @param src Pointer to the packet source
+ * @param buf_ref Pointer to the net_buf to send (reference is NOT consumed)
+ * @param timeout Maximum time to wait for all sinks (K_NO_WAIT, K_FOREVER, or
+ * timeout)
+ *
+ * @return Number of sinks that successfully received the packet
+ */
+int flow_source_send_ref(struct flow_source *src, struct net_buf *buf_ref, k_timeout_t timeout);
 
 /**
  * @brief Process a single event from a packet event queue
@@ -417,31 +461,6 @@ int flow_source_send_consume(struct flow_source *src, struct net_buf *buf, k_tim
 int flow_event_process(struct k_msgq *queue, k_timeout_t timeout);
 
 /**
- * @brief Deliver a packet directly to a sink
- *
- * This function delivers a packet to a single sink, handling both IMMEDIATE
- * and QUEUED execution modes. For IMMEDIATE mode, the handler is called
- * directly. For QUEUED mode, the packet event is placed in the sink's
- * message queue.
- *
- * The function takes a new reference to the buffer for the sink, so the
- * caller's reference is preserved (NOT consumed). The caller must still unref
- * their buffer after calling this function. The sink's handler should NOT call
- * net_buf_unref() as the framework manages buffer references.
- *
- * @param sink Pointer to the packet sink
- * @param buf Pointer to the net_buf to deliver (reference is NOT consumed)
- * @param timeout Maximum time to wait for queuing (only used for QUEUED mode)
- *
- * @return 0 on success, negative errno on error:
- *         -EINVAL if sink or buf is NULL
- *         -ENOSYS if QUEUED mode but no message queue configured
- *         -ENOBUFS if message queue is full
- *         -ENOTSUP if sink mode is invalid
- */
-int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t timeout);
-
-/**
  * @brief Deliver a packet directly to a sink (consuming reference)
  *
  * This function delivers a packet to a single sink, handling both IMMEDIATE
@@ -450,9 +469,8 @@ int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t t
  * message queue.
  *
  * This function CONSUMES the caller's reference to the buffer. The caller
- * should NOT unref the buffer after calling this function. This is more
- * efficient than flow_sink_deliver() when the caller doesn't need the
- * buffer after delivery, as it avoids an extra ref/unref cycle.
+ * should NOT unref the buffer after calling this function. This is the
+ * recommended function for most use cases.
  *
  * @param sink Pointer to the packet sink
  * @param buf Pointer to the net_buf to deliver (reference IS consumed)
@@ -464,7 +482,38 @@ int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t t
  *         -ENOBUFS if message queue is full
  *         -ENOTSUP if sink mode is invalid
  */
-int flow_sink_deliver_consume(struct flow_sink *sink, struct net_buf *buf, k_timeout_t timeout);
+int flow_sink_deliver(struct flow_sink *sink, struct net_buf *buf, k_timeout_t timeout);
+
+/**
+ * @brief Deliver a packet directly to a sink (preserving reference)
+ *
+ * WARNING: The caller MUST call net_buf_unref() after this function.
+ *
+ * This function delivers a packet to a single sink, handling both IMMEDIATE
+ * and QUEUED execution modes. For IMMEDIATE mode, the handler is called
+ * directly. For QUEUED mode, the packet event is placed in the sink's
+ * message queue.
+ *
+ * The function takes a new reference to the buffer for the sink, so the
+ * caller's reference is preserved (NOT consumed). The caller must still unref
+ * their buffer after calling this function. The sink's handler should NOT call
+ * net_buf_unref() as the framework manages buffer references.
+ *
+ * This function is primarily used internally by the flow framework when
+ * delivering to multiple sinks. Application code should typically use
+ * flow_sink_deliver() instead.
+ *
+ * @param sink Pointer to the packet sink
+ * @param buf_ref Pointer to the net_buf to deliver (reference is NOT consumed)
+ * @param timeout Maximum time to wait for queuing (only used for QUEUED mode)
+ *
+ * @return 0 on success, negative errno on error:
+ *         -EINVAL if sink or buf_ref is NULL
+ *         -ENOSYS if QUEUED mode but no message queue configured
+ *         -ENOBUFS if message queue is full
+ *         -ENOTSUP if sink mode is invalid
+ */
+int flow_sink_deliver_ref(struct flow_sink *sink, struct net_buf *buf_ref, k_timeout_t timeout);
 
 #ifdef CONFIG_FLOW_RUNTIME_OBSERVERS
 /**
@@ -549,48 +598,274 @@ void flow_source_reset_stats(struct flow_source *src);
 void flow_sink_reset_stats(struct flow_sink *sink);
 #endif /* CONFIG_FLOW_STATS */
 
+/* ============================ Buffer Allocation ============================ */
+
 /**
- * @brief Set packet ID in a buffer
+ * @brief Allocate a flow-managed buffer
  *
- * Stores the packet ID in the buffer's user data area.
+ * Allocates a buffer from the pool and initializes flow metadata with
+ * default values:
+ * - packet_id: FLOW_PACKET_ID_ANY (255)
+ * - flags: 0
+ * - counter: atomic increment from pool
+ * - timestamp: current ticks (32-bit) or cycles (64-bit)
  *
- * @param buf Pointer to the network buffer
- * @param packet_id Packet ID to set
- * @return 0 on success, -ENOBUFS if buffer has insufficient user data space
+ * @param pool Pointer to flow_buf_pool
+ * @param timeout Allocation timeout
+ * @return Pointer to net_buf, or NULL on failure
  */
-static inline int flow_packet_id_set(struct net_buf *buf, uint16_t packet_id)
+struct net_buf *flow_buf_alloc(struct flow_buf_pool *pool, k_timeout_t timeout);
+
+/**
+ * @brief Allocate a flow buffer with specific packet ID
+ *
+ * Like flow_buf_alloc() but sets packet_id to specified value.
+ * Counter still auto-increments from pool.
+ *
+ * @param pool Pointer to flow_buf_pool
+ * @param packet_id Initial packet ID (0-254, or 255 for ANY)
+ * @param timeout Allocation timeout
+ * @return Pointer to net_buf, or NULL on failure
+ */
+struct net_buf *flow_buf_alloc_with_id(struct flow_buf_pool *pool, uint8_t packet_id,
+				       k_timeout_t timeout);
+
+/* ============================ Metadata Accessors ============================ */
+
+/**
+ * @brief Get flow metadata from buffer
+ *
+ * @param buf Pointer to network buffer
+ * @return Pointer to metadata, or NULL if invalid
+ */
+static inline struct flow_buf_metadata *flow_buf_get_meta(struct net_buf *buf)
 {
-	if (!buf || buf->user_data_size < sizeof(uint16_t)) {
-		return -ENOBUFS;
+	if (!buf || buf->user_data_size < FLOW_BUF_METADATA_SIZE) {
+		return NULL;
 	}
-	uint16_t *pkt_id = (uint16_t *)net_buf_user_data(buf);
-	*pkt_id = packet_id;
+	return (struct flow_buf_metadata *)net_buf_user_data(buf);
+}
+
+/**
+ * @brief Set packet ID in buffer metadata
+ *
+ * @param buf Pointer to network buffer
+ * @param packet_id Packet ID to set
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_set_id(struct net_buf *buf, uint8_t packet_id)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta) {
+		return -EINVAL;
+	}
+	meta->packet_id = packet_id;
 	return 0;
 }
 
 /**
- * @brief Get packet ID from a buffer
+ * @brief Get packet ID from buffer metadata
  *
- * Retrieves the packet ID from the buffer's user data area.
- *
- * @param buf Pointer to the network buffer
- * @param packet_id Pointer to store the packet ID
- * @return 0 on success, -ENOBUFS if buffer has insufficient user data space,
- *         -EINVAL if buf or packet_id is NULL
+ * @param buf Pointer to network buffer
+ * @param packet_id Output pointer for packet ID
+ * @return 0 on success, -EINVAL if invalid
  */
-static inline int flow_packet_id_get(struct net_buf *buf, uint16_t *packet_id)
+static inline int flow_buf_get_id(struct net_buf *buf, uint8_t *packet_id)
 {
-	if (!buf || !packet_id) {
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta || !packet_id) {
 		return -EINVAL;
 	}
-	if (buf->user_data_size < sizeof(uint16_t)) {
-		*packet_id = FLOW_PACKET_ID_ANY; /* Default to ANY if no space */
-		return -ENOBUFS;
-	}
-	uint16_t *pkt_id = (uint16_t *)net_buf_user_data(buf);
-	*packet_id = *pkt_id;
+	*packet_id = meta->packet_id;
 	return 0;
 }
+
+/**
+ * @brief Set counter value in buffer metadata
+ *
+ * @param buf Pointer to network buffer
+ * @param counter Counter value to set
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_set_counter(struct net_buf *buf, uint16_t counter)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta) {
+		return -EINVAL;
+	}
+	meta->counter = counter;
+	return 0;
+}
+
+/**
+ * @brief Get counter value from buffer metadata
+ *
+ * @param buf Pointer to network buffer
+ * @param counter Output pointer for counter
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_get_counter(struct net_buf *buf, uint16_t *counter)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta || !counter) {
+		return -EINVAL;
+	}
+	*counter = meta->counter;
+	return 0;
+}
+
+/**
+ * @brief Set flags in buffer metadata
+ *
+ * @param buf Pointer to network buffer
+ * @param flags Flags to set
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_set_flags(struct net_buf *buf, uint8_t flags)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta) {
+		return -EINVAL;
+	}
+	meta->flags = flags;
+	return 0;
+}
+
+/**
+ * @brief Get flags from buffer metadata
+ *
+ * @param buf Pointer to network buffer
+ * @param flags Output pointer for flags
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_get_flags(struct net_buf *buf, uint8_t *flags)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta || !flags) {
+		return -EINVAL;
+	}
+	*flags = meta->flags;
+	return 0;
+}
+
+/* Timestamp API - Different functions for different resolutions */
+
+/**
+ * @brief Update timestamp to current time
+ *
+ * Updates timestamp to current system time. Uses k_uptime_ticks() for
+ * standard resolution or k_cycle_get_64() for high resolution depending
+ * on CONFIG_FLOW_BUF_TIMESTAMP_HIRES.
+ *
+ * @param buf Pointer to network buffer
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_update_timestamp(struct net_buf *buf)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta) {
+		return -EINVAL;
+	}
+#ifndef CONFIG_FLOW_BUF_TIMESTAMP_HIRES
+	meta->ticks = k_uptime_ticks();
+#else
+	meta->cycles = k_cycle_get_64();
+#endif
+	return 0;
+}
+
+#ifndef CONFIG_FLOW_BUF_TIMESTAMP_HIRES
+
+/**
+ * @brief Get timestamp in system ticks (32-bit)
+ *
+ * Timestamp is stored as k_uptime_ticks() value at allocation time.
+ * Convert to time units using k_ticks_to_ns_floor32/64(), k_ticks_to_us_floor32/64(),
+ * or k_ticks_to_ms_floor32/64().
+ *
+ * @param buf Pointer to network buffer
+ * @param ticks Output pointer for timestamp in ticks
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_get_timestamp_ticks(struct net_buf *buf, uint32_t *ticks)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta || !ticks) {
+		return -EINVAL;
+	}
+	*ticks = meta->ticks;
+	return 0;
+}
+
+/**
+ * @brief Set timestamp to specific value in ticks
+ *
+ * @param buf Pointer to network buffer
+ * @param ticks Timestamp value to set
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_set_timestamp_ticks(struct net_buf *buf, uint32_t ticks)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta) {
+		return -EINVAL;
+	}
+	meta->ticks = ticks;
+	return 0;
+}
+
+#else /* CONFIG_FLOW_BUF_TIMESTAMP_HIRES */
+
+/**
+ * @brief Get timestamp in CPU cycles (64-bit)
+ *
+ * Timestamp is stored as k_cycle_get_64() value at allocation time.
+ * Convert to time units using k_cyc_to_ns_floor64(), k_cyc_to_us_floor64(),
+ * or k_cyc_to_ms_floor64().
+ *
+ * @param buf Pointer to network buffer
+ * @param cycles Output pointer for timestamp in CPU cycles
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_get_timestamp_cycles(struct net_buf *buf, uint64_t *cycles)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta || !cycles) {
+		return -EINVAL;
+	}
+	*cycles = meta->cycles;
+	return 0;
+}
+
+/**
+ * @brief Set timestamp to specific value in CPU cycles
+ *
+ * @param buf Pointer to network buffer
+ * @param cycles Timestamp value to set
+ * @return 0 on success, -EINVAL if invalid
+ */
+static inline int flow_buf_set_timestamp_cycles(struct net_buf *buf, uint64_t cycles)
+{
+	struct flow_buf_metadata *meta = flow_buf_get_meta(buf);
+
+	if (!meta) {
+		return -EINVAL;
+	}
+	meta->cycles = cycles;
+	return 0;
+}
+
+#endif /* CONFIG_FLOW_BUF_TIMESTAMP_HIRES */
 
 /** @} */
 

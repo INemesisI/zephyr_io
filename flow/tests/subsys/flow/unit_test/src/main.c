@@ -31,7 +31,7 @@ LOG_MODULE_REGISTER(flow_test, LOG_LEVEL_INF);
 #define TEST_MANY_PACKETS       30
 
 /* Define a test buffer pool */
-NET_BUF_POOL_DEFINE(test_pool, TEST_BUFFER_POOL_SIZE, TEST_BUFFER_SIZE, 4, NULL);
+FLOW_BUF_POOL_DEFINE(test_pool, TEST_BUFFER_POOL_SIZE, TEST_BUFFER_SIZE, NULL);
 
 /* =============================================================================
  * Handler Buffer Management Rules:
@@ -53,20 +53,20 @@ static struct test_capture captures[10] = {0};
 size_t pool_num_free(struct net_buf_pool *pool);
 static int get_sink_idx(struct flow_sink *sink);
 /* QUEUED handler - counts packets and stores last value (no unref needed) */
-static void capture_handler(struct flow_sink *sink, struct net_buf *buf)
+static void capture_handler(struct flow_sink *sink, struct net_buf *buf_ref)
 {
 	zassert(sink != NULL, "Sink is NULL");
-	zassert(buf != NULL, "Buffer is NULL");
+	zassert(buf_ref != NULL, "Buffer is NULL");
 	zassert(sink->user_data != NULL, "Sink user_data is NULL");
-	zassert(buf->ref > 0, "Buffer ref is zero");
+	zassert(buf_ref->ref > 0, "Buffer ref is zero");
 
 	struct test_capture *capture = (struct test_capture *)sink->user_data;
 
 	atomic_inc(&capture->count);
 	/* Store the last value seen */
-	if (buf && buf->data && buf->len >= 4) {
+	if (buf_ref && buf_ref->data && buf_ref->len >= 4) {
 		capture->has_value = true;
-		capture->last_value = sys_le32_to_cpu(*(uint32_t *)buf->data);
+		capture->last_value = sys_le32_to_cpu(*(uint32_t *)buf_ref->data);
 	}
 }
 
@@ -154,7 +154,7 @@ static void reset_all_captures(void)
 
 struct net_buf *alloc_net_buf(uint32_t value)
 {
-	struct net_buf *buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	struct net_buf *buf = flow_buf_alloc(&test_pool, K_NO_WAIT);
 	zassert_not_null(buf, "Should allocate");
 	zassert_equal(buf->ref, 1, "Initial ref = 1");
 
@@ -170,7 +170,8 @@ static int send_packet(int source_idx, uint32_t data, k_timeout_t timeout, bool 
 
 	buf = alloc_net_buf(data);
 
-	ret = flow_source_send(&sources[source_idx], buf, timeout);
+	/* Use ref version to check reference counts */
+	ret = flow_source_send_ref(&sources[source_idx], buf, timeout);
 	if (check_ret) {
 		zassert_equal(ret, num_connected[source_idx], "Send from sources[%d]", source_idx);
 		zassert_equal(buf->ref, 1 + num_connected[source_idx] - num_immediate[source_idx],
@@ -298,8 +299,7 @@ static void test_teardown(void *fixture)
 		      "Event queue size mismatch");
 
 	/* Verify no pending buffers */
-	zassert_equal(test_pool.buf_count, TEST_BUFFER_POOL_SIZE, "Buffer pool count mismatch");
-	zassert_equal(pool_num_free(&test_pool), TEST_BUFFER_POOL_SIZE,
+	zassert_equal(pool_num_free(test_pool.pool), TEST_BUFFER_POOL_SIZE,
 		      "Buffer pool size mismatch");
 }
 
@@ -407,7 +407,7 @@ ZTEST(flow_unit_test, test_send_consume)
 	int ret;
 	ARRAY_FOR_EACH(sources, source_idx) {
 		buf = alloc_net_buf(0xFEED);
-		ret = flow_source_send_consume(&sources[source_idx], buf, K_NO_WAIT);
+		ret = flow_source_send(&sources[source_idx], buf, K_NO_WAIT);
 		zassert_equal(ret, num_connected[source_idx], "Send from sources[%d]", source_idx);
 		zassert_equal(buf->ref, num_connected[source_idx] - num_immediate[source_idx],
 			      "Ref after send from sources[%d]", source_idx);
@@ -415,7 +415,7 @@ ZTEST(flow_unit_test, test_send_consume)
 		verify_deliveries(source_idx, 1, 0xFEED, true);
 		process_all_events();
 		verify_deliveries(source_idx, 1, 0xFEED, false);
-		zassert_equal(pool_num_free(&test_pool), TEST_BUFFER_POOL_SIZE,
+		zassert_equal(pool_num_free(test_pool.pool), TEST_BUFFER_POOL_SIZE,
 			      "Buffer pool count after send_consume");
 		reset_all_captures();
 	}
@@ -618,7 +618,7 @@ ZTEST(flow_unit_test, test_invalid_source_send)
 	zassert_equal(ret, -EINVAL, "Should reject NULL parameters");
 }
 
-/* Test invalid inputs for flow_source_send_consume */
+/* Test invalid inputs for flow_source_send */
 ZTEST(flow_unit_test, test_invalid_source_send_consume)
 {
 	struct net_buf *buf;
@@ -626,16 +626,16 @@ ZTEST(flow_unit_test, test_invalid_source_send_consume)
 
 	/* Test NULL source */
 	buf = alloc_net_buf(0xFEED);
-	ret = flow_source_send_consume(NULL, buf, K_NO_WAIT);
+	ret = flow_source_send(NULL, buf, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should reject NULL source");
 	net_buf_unref(buf);
 
 	/* Test NULL buffer */
-	ret = flow_source_send_consume(&sources[0], NULL, K_NO_WAIT);
+	ret = flow_source_send(&sources[0], NULL, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should reject NULL buffer");
 
 	/* Test both NULL */
-	ret = flow_source_send_consume(NULL, NULL, K_NO_WAIT);
+	ret = flow_source_send(NULL, NULL, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should reject NULL parameters");
 }
 
@@ -792,8 +792,8 @@ ZTEST(flow_unit_test, test_corrupted_event_in_queue)
 	k_msgq_purge(&test_corrupt_msgq);
 }
 
-/* Test flow_sink_deliver public API */
-ZTEST(flow_unit_test, test_flow_sink_deliver_invalid_params)
+/* Test flow_sink_deliver_ref public API */
+ZTEST(flow_unit_test, test_flow_sink_deliver_ref_invalid_params)
 {
 	struct flow_sink sink = {
 		.mode = SINK_MODE_IMMEDIATE,
@@ -803,22 +803,22 @@ ZTEST(flow_unit_test, test_flow_sink_deliver_invalid_params)
 	struct net_buf *buf = alloc_net_buf(0xFEED);
 
 	/* Test NULL sink */
-	int ret = flow_sink_deliver(NULL, buf, K_NO_WAIT);
+	int ret = flow_sink_deliver_ref(NULL, buf, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should return -EINVAL for NULL sink");
 
 	/* Test NULL buffer */
-	ret = flow_sink_deliver(&sink, NULL, K_NO_WAIT);
+	ret = flow_sink_deliver_ref(&sink, NULL, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should return -EINVAL for NULL buffer");
 
 	/* Test queued mode without message queue */
 	FLOW_SINK_DEFINE_QUEUED(bad_sink, capture_handler, NULL, NULL);
-	ret = flow_sink_deliver(&bad_sink, buf, K_NO_WAIT);
+	ret = flow_sink_deliver_ref(&bad_sink, buf, K_NO_WAIT);
 	zassert_equal(ret, -ENOSYS, "Should return -ENOSYS for queued mode without queue");
 
 	net_buf_unref(buf);
 }
 
-ZTEST(flow_unit_test, test_flow_sink_deliver)
+ZTEST(flow_unit_test, test_flow_sink_deliver_ref)
 {
 	struct net_buf *buf;
 	ARRAY_FOR_EACH(sinks, sink_idx) {
@@ -826,8 +826,8 @@ ZTEST(flow_unit_test, test_flow_sink_deliver)
 		buf = alloc_net_buf(0xFEED);
 
 		/* Deliver packet to sink */
-		int ret = flow_sink_deliver(&sinks[sink_idx], buf, K_NO_WAIT);
-		zassert_equal(ret, 0, "flow_sink_deliver should succeed");
+		int ret = flow_sink_deliver_ref(&sinks[sink_idx], buf, K_NO_WAIT);
+		zassert_equal(ret, 0, "flow_sink_deliver_ref should succeed");
 
 		if (sinks[sink_idx].mode == SINK_MODE_QUEUED) {
 			zassert_equal(buf->ref, 2, "Buffer ref should increase for delivery");
@@ -846,8 +846,8 @@ ZTEST(flow_unit_test, test_flow_sink_deliver)
 	}
 }
 
-/* Test flow_sink_deliver_consume public API */
-ZTEST(flow_unit_test, test_flow_sink_deliver_consume)
+/* Test flow_sink_deliver public API (consuming version) */
+ZTEST(flow_unit_test, test_flow_sink_deliver)
 {
 	struct net_buf *buf;
 	ARRAY_FOR_EACH(sinks, sink_idx) {
@@ -855,7 +855,7 @@ ZTEST(flow_unit_test, test_flow_sink_deliver_consume)
 		buf = alloc_net_buf(0xFEED);
 
 		/* Deliver packet to sink */
-		int ret = flow_sink_deliver_consume(&sinks[sink_idx], buf, K_NO_WAIT);
+		int ret = flow_sink_deliver(&sinks[sink_idx], buf, K_NO_WAIT);
 		zassert_equal(ret, 0, "flow_sink_deliver should succeed");
 
 		if (sinks[sink_idx].mode == SINK_MODE_QUEUED) {
@@ -870,12 +870,12 @@ ZTEST(flow_unit_test, test_flow_sink_deliver_consume)
 		zassert_equal(captures[sink_idx].last_value, 0xFEED, "Should have correct value");
 
 		/* Buffer should be consumed */
-		zassert_equal(pool_num_free(&test_pool), TEST_BUFFER_POOL_SIZE,
+		zassert_equal(pool_num_free(test_pool.pool), TEST_BUFFER_POOL_SIZE,
 			      "Buffer should be consumed");
 	}
 }
 
-ZTEST(flow_unit_test, test_flow_sink_deliver_consume_invalid)
+ZTEST(flow_unit_test, test_flow_sink_deliver_invalid)
 {
 	struct flow_sink sink = {
 		.mode = SINK_MODE_IMMEDIATE,
@@ -883,15 +883,15 @@ ZTEST(flow_unit_test, test_flow_sink_deliver_consume_invalid)
 	};
 
 	/* Test NULL sink - should return error and consume buffer */
-	struct net_buf *buf = net_buf_alloc(&test_pool, K_NO_WAIT);
+	struct net_buf *buf = flow_buf_alloc(&test_pool, K_NO_WAIT);
 	zassert_not_null(buf, "Failed to allocate buffer");
 
-	int ret = flow_sink_deliver_consume(NULL, buf, K_NO_WAIT);
+	int ret = flow_sink_deliver(NULL, buf, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should return -EINVAL for NULL sink");
 	/* Buffer is consumed even on error */
 
 	/* Test NULL buffer */
-	ret = flow_sink_deliver_consume(&sink, NULL, K_NO_WAIT);
+	ret = flow_sink_deliver(&sink, NULL, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should return -EINVAL for NULL buffer");
 }
 
@@ -901,9 +901,9 @@ ZTEST(flow_unit_test, test_flow_sink_deliver_consume_invalid)
  */
 
 /* Define test packet IDs */
-#define TEST_PACKET_ID_1 0x1234
-#define TEST_PACKET_ID_2 0x5678
-#define TEST_PACKET_ID_3 0x9ABC
+#define TEST_PACKET_ID_1 0x12
+#define TEST_PACKET_ID_2 0x56
+#define TEST_PACKET_ID_3 0x9A
 
 FLOW_SOURCE_DEFINE_ROUTED(source_routed, TEST_PACKET_ID_1);
 FLOW_SOURCE_DEFINE(source_any);
@@ -935,7 +935,7 @@ ZTEST(flow_unit_test, test_packet_id_filtering)
 	zassert_not_null(buf, "Buffer allocation failed");
 
 	/* Test sending from source with specific packet ID */
-	ret = flow_source_send_consume(&source_routed, buf, K_NO_WAIT);
+	ret = flow_source_send(&source_routed, buf, K_NO_WAIT);
 	zassert_equal(ret, 2, "Should deliver to 2 sinks (matching + any)");
 	zassert_equal(atomic_get(&((struct test_capture *)sink_any.user_data)->count), 1,
 		      "sink_any should receive");
@@ -951,7 +951,7 @@ ZTEST(flow_unit_test, test_packet_id_filtering)
 	buf = alloc_net_buf(0xDEAD);
 	zassert_not_null(buf, "Buffer allocation failed");
 	/* Test sending from source with any packet ID */
-	ret = flow_source_send_consume(&source_any, buf, K_NO_WAIT);
+	ret = flow_source_send(&source_any, buf, K_NO_WAIT);
 	zassert_equal(ret, 1, "Should deliver to all sinks");
 	zassert_equal(atomic_get(&((struct test_capture *)sink_any.user_data)->count), 1,
 		      "sink_any should receive");
