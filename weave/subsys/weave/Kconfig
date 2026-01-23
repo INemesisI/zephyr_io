@@ -1,5 +1,0 @@
-# Copyright (c) 2024 Zephyr IO Project
-# SPDX-License-Identifier: Apache-2.0
-
-# Subsystem specific configuration options
-# Main configuration is in the module's root Kconfig

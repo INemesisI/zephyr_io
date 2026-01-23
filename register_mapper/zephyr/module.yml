@@ -1,4 +1,0 @@
-name: register_mapper
-build:
-  cmake: .
-  kconfig: subsys/register_mapper/Kconfig

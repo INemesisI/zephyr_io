@@ -1,0 +1,28 @@
+sample:
+  name: Weave Method RPC Sample
+  description: Demonstrates the Weave Method RPC API with type-safe method calls
+common:
+  tags:
+    - weave
+    - rpc
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "Weave Method RPC Sample"
+      - "Test 1: Configure sensor"
+      - "Config set:"
+      - "Test 2: Manual sensor reads"
+      - "Manual read ch0:"
+      - "Test 3: Increase threshold"
+      - "Test 4: Get statistics"
+      - "Sensor Statistics:"
+      - "Sample Complete!"
+      - "Sensor thread stopped"
+tests:
+  sample.weave.sensor_rpc:
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim

@@ -1,0 +1,60 @@
+# Copyright (c) 2026 Zephyr Project
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig WEAVE
+	bool "Weave message passing framework"
+	help
+	  Enable the Weave message passing framework.
+	  Provides sources and sinks for generic message distribution.
+	  Includes Packet (net_buf routing) and Method (RPC) subsystems.
+
+if WEAVE
+
+config WEAVE_INIT_PRIORITY
+	int "Initialization priority"
+	default 99
+	range 0 99
+	help
+	  SYS_INIT priority for wiring static connections.
+	  Must run after kernel but before application init.
+
+module = WEAVE
+module-str = weave
+source "subsys/logging/Kconfig.template.log_config"
+
+# ========================== Packet Subsystem ==========================
+
+config WEAVE_PACKET
+	bool "Weave Packet routing (net_buf on Weave)"
+	select NET_BUF
+	help
+	  Enable the Weave Packet routing subsystem.
+	  Provides zero-copy distribution of net_buf packets
+	  using reference counting, built on Weave core.
+
+config WEAVE_PACKET_TIMESTAMP_HIRES
+	bool "Use high-resolution timestamps (64-bit cycles)"
+	depends on WEAVE_PACKET
+	help
+	  Use k_cycle_get_64() for packet timestamps instead of
+	  k_uptime_ticks(). Provides higher resolution but uses
+	  more memory per packet (8 bytes vs 4 bytes).
+
+# ========================== Method Subsystem ==========================
+
+menuconfig WEAVE_METHOD
+	bool "Weave Method RPC framework"
+	help
+	  Enable the Weave Method RPC (Remote Procedure Call) framework.
+	  Provides type-safe RPC with zero-allocation call semantics.
+
+# ========================== Observable Subsystem ==========================
+
+config WEAVE_OBSERVABLE
+	bool "Weave Observable (stateful pub/sub)"
+	help
+	  Enable the Weave Observable subsystem.
+	  Provides stateful publish/subscribe with zero allocation.
+	  Observers can be immediate (sync callback) or async (via queue).
+
+endif # WEAVE

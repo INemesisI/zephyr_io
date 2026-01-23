@@ -1,9 +1,9 @@
 #!/bin/bash
-# Unified test runner for all modules
+# Unified test runner for modules in libs/
 # Usage: ./run_tests.sh <module_name> [twister_options]
-# Example: ./run_tests.sh flow
+# Example: ./run_tests.sh weave
 #          ./run_tests.sh weave -v
-#          ./run_tests.sh flow --coverage
+#          ./run_tests.sh weave --coverage
 
 set -e
 
@@ -40,31 +40,32 @@ usage() {
     echo "Usage: $0 <module_name> [twister_options]"
     echo ""
     echo "Arguments:"
-    echo "  module_name    - Name of the module directory to test"
+    echo "  module_name    - Name of the module in libs/ directory to test"
     echo "  twister_options - Any options to pass to Twister"
     echo ""
     echo "Examples:"
-    echo "  $0 flow"
+    echo "  $0 weave"
     echo "  $0 weave -v"
-    echo "  $0 flow --coverage"
-    echo "  $0 mymodule -v --inline-logs"
+    echo "  $0 weave --coverage"
+    echo "  $0 weave -v --inline-logs"
     exit 1
 }
 
 # Function to run tests for a specific module
 run_module_tests() {
     local module_name=$1
+    local module_path="$PROJECT_ROOT/libs/$module_name"
 
     echo -e "${YELLOW}=== Running ${module_name} Tests ===${NC}"
 
-    # Check if module directory exists
-    if [ ! -d "$PROJECT_ROOT/$module_name" ]; then
-        echo -e "${RED}Error: Module directory '$module_name' not found${NC}"
+    # Check if module directory exists in libs/
+    if [ ! -d "$module_path" ]; then
+        echo -e "${RED}Error: Module directory 'libs/$module_name' not found${NC}"
         return 1
     fi
 
     # Set up environment variables
-    export ZEPHYR_EXTRA_MODULES="$PROJECT_ROOT/$module_name"
+    export ZEPHYR_EXTRA_MODULES="$module_path"
     export PYTHON_PREFER="$PROJECT_ROOT/.venv/bin/python3"
     export CMAKE_PREFIX_PATH="$PROJECT_ROOT/.venv"
 
@@ -72,7 +73,7 @@ run_module_tests() {
     echo -e "${BLUE}Running all $module_name tests and samples...${NC}"
 
     west twister \
-        -T "$module_name" \
+        -T "libs/$module_name" \
         -p native_sim \
         -O twister-out \
         --no-clean \
@@ -95,14 +96,14 @@ if [ -z "$MODULE" ] || [ "$MODULE" = "-h" ] || [ "$MODULE" = "--help" ] || [ "$M
     usage
 fi
 
-# Check if module directory exists
-if [ ! -d "$PROJECT_ROOT/$MODULE" ]; then
-    echo -e "${RED}Error: Module directory '$MODULE' not found${NC}"
+# Check if module directory exists in libs/
+if [ ! -d "$PROJECT_ROOT/libs/$MODULE" ]; then
+    echo -e "${RED}Error: Module directory 'libs/$MODULE' not found${NC}"
     echo ""
-    echo "Available modules:"
-    for dir in */; do
+    echo "Available modules in libs/:"
+    for dir in libs/*/; do
         if [ -f "${dir}zephyr/module.yml" ]; then
-            echo "  ${dir%/}"
+            basename "${dir%/}"
         fi
     done
     exit 1

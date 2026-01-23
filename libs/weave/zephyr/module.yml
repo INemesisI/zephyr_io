@@ -1,0 +1,4 @@
+name: weave
+build:
+  cmake: .
+  kconfig: Kconfig

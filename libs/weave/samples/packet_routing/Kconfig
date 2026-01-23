@@ -1,0 +1,11 @@
+# Packet Routing Sample Configuration
+
+config PACKET_ROUTING_AUTO_START_SAMPLING
+	bool "Automatically start sampling on boot"
+	default y
+	help
+	  When enabled, the packet routing sample will automatically start
+	  generating sensor data packets on boot. When disabled,
+	  sampling must be started manually via TCP command.
+
+source "Kconfig.zephyr"

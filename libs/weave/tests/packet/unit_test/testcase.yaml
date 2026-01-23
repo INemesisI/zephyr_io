@@ -1,0 +1,7 @@
+tests:
+  weave.packet.unit_test:
+    tags: weave packet unit_test
+    integration_platforms:
+      - native_sim
+      - qemu_cortex_m3
+    harness: ztest

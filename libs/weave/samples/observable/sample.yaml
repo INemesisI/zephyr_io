@@ -1,0 +1,19 @@
+sample:
+  name: Weave Observable Settings Sample
+  description: Demonstrates Weave Observable for settings with shell commands
+common:
+  tags:
+    - weave
+    - observable
+  harness: pytest
+  harness_config:
+    pytest_root:
+      - pytest
+tests:
+  sample.weave.observable:
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim
+    extra_configs:
+      - arch:posix:CONFIG_NATIVE_UART_0_ON_STDINOUT=y

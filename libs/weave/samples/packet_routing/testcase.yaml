@@ -1,0 +1,13 @@
+tests:
+  sample.weave.packet_routing:
+    harness: pytest
+    platform_allow: native_sim
+    integration_platforms:
+      - native_sim
+    tags:
+      - weave
+      - packet
+      - tcp
+      - samples
+    extra_configs:
+      - CONFIG_PACKET_ROUTING_AUTO_START_SAMPLING=n

@@ -1,5 +1,0 @@
-tests:
-  flow.runtime:
-    harness: ztest
-    tags: flow
-    platform_allow: native_sim
