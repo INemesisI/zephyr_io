@@ -1,0 +1,20 @@
+sample:
+  name: Weave Observable Register-Based Settings
+  description: Demonstrates register-based settings access using Weave Observable
+common:
+  tags:
+    - weave
+    - observable
+    - settings
+  harness: pytest
+  harness_config:
+    pytest_root:
+      - pytest
+tests:
+  sample.weave.settings_registers:
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim
+    extra_configs:
+      - arch:posix:CONFIG_NATIVE_UART_0_ON_STDINOUT=y
