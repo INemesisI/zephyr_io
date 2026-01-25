@@ -35,24 +35,14 @@ extern "C" {
  * @{
  */
 
-/* ============================ Payload Ops ============================ */
-
 /**
- * @brief Passthrough ref - always succeeds, no actual reference counting
- *
- * Observables pass a pointer to the observable struct itself, which is
- * statically allocated. No reference counting needed.
+ * Passthrough ops for observable sources.
+ * Non-NULL ops bypasses the "single sink" restriction in core.c,
+ * but NULL ref/unref means no actual lifecycle management needed.
  */
-static inline int weave_observable_ref(void *ptr, struct weave_sink *sink)
-{
-	ARG_UNUSED(ptr);
-	ARG_UNUSED(sink);
-	return 0; /* Always allow delivery */
-}
-
-/** Passthrough ops for observable sources */
 static const struct weave_payload_ops weave_observable_ops = {
-	.ref = weave_observable_ref, .unref = NULL, /* No cleanup needed */
+	.ref = NULL,
+	.unref = NULL,
 };
 
 /* ============================ Type Definitions ============================ */
@@ -95,8 +85,8 @@ struct weave_observable {
 	void *value;
 	/** Value size in bytes */
 	size_t size;
-	/** Lock protecting value during updates */
-	struct k_spinlock lock;
+	/** Semaphore protecting value during updates */
+	struct k_sem sem;
 	/** Owner notification sink (handler/queue/user_data) */
 	struct weave_sink owner_sink;
 	/** Validator function (optional) */
@@ -142,6 +132,7 @@ struct weave_observable {
 		.source = WEAVE_SOURCE_INITIALIZER(_name, &weave_observable_ops),                  \
 		.value = &_name##_value,                                                           \
 		.size = sizeof(_type),                                                             \
+		.sem = Z_SEM_INITIALIZER(_name.sem, 1, 1),                                         \
 		.owner_sink = WEAVE_SINK_INITIALIZER((weave_handler_t)(_handler), (_queue),        \
 						     (_user_data), WV_NO_OPS),                     \
 		.validator = (_validator),                                                         \
@@ -179,6 +170,7 @@ struct weave_observable {
  *
  * @param _observable Observable variable (not pointer)
  * @param _value_ptr Pointer to new value
+ * @return Number of observers notified, or negative errno
  */
 #define WEAVE_OBSERVABLE_SET(_observable, _value_ptr)                                              \
 	weave_observable_set_unchecked(&(_observable), (_value_ptr));                              \
@@ -192,6 +184,7 @@ struct weave_observable {
  *
  * @param _observable Observable variable (not pointer)
  * @param _value_ptr Pointer to receive value
+ * @return 0 on success, negative errno on error
  */
 #define WEAVE_OBSERVABLE_GET(_observable, _value_ptr)                                              \
 	weave_observable_get_unchecked(&(_observable), (_value_ptr));                              \
@@ -223,6 +216,50 @@ int weave_observable_set_unchecked(struct weave_observable *obs, const void *val
  * @return 0 on success, negative errno on error
  */
 int weave_observable_get_unchecked(struct weave_observable *obs, void *value);
+
+/**
+ * @brief Claim exclusive access to observable value
+ *
+ * Locks the observable and returns pointer to value for in-place modification.
+ * Must be followed by finish() or publish().
+ *
+ * @param obs Pointer to observable
+ * @param timeout How long to wait for lock
+ * @return Pointer to value buffer, or NULL on timeout/error
+ */
+void *weave_observable_claim(struct weave_observable *obs, k_timeout_t timeout);
+
+/**
+ * @brief Finish claimed access without notifying observers
+ *
+ * Releases lock without triggering notifications.
+ * Use for read-only access or when notification is not needed.
+ *
+ * @param obs Pointer to observable (must have been claimed)
+ */
+void weave_observable_finish(struct weave_observable *obs);
+
+/**
+ * @brief Publish claimed modifications and notify observers
+ *
+ * Releases lock and notifies owner handler + all connected observers.
+ *
+ * @param obs Pointer to observable (must have been claimed)
+ * @return Number of observers notified, or negative errno
+ */
+int weave_observable_publish(struct weave_observable *obs);
+
+/**
+ * @brief Validate a value without applying it
+ *
+ * Calls the observable's validator (if defined) on the given value.
+ * Does not modify state or notify observers.
+ *
+ * @param obs Pointer to observable
+ * @param value Pointer to value to validate
+ * @return 0 if valid, negative errno if invalid or no validator
+ */
+int weave_observable_validate(struct weave_observable *obs, const void *value);
 
 /** @} */
 
