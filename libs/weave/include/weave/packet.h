@@ -163,8 +163,9 @@ typedef void (*weave_packet_handler_t)(struct net_buf *buf, void *user_data);
 							   .user_data = (_user_data)};             \
 	static void _name##_wrapper(void *ptr, void *ctx)                                          \
 	{                                                                                          \
-		((weave_packet_handler_t)(_handler))(                                              \
-			(struct net_buf *)ptr, ((struct weave_packet_sink_ctx *)ctx)->user_data);  \
+		weave_packet_handler_t handler_fn = (weave_packet_handler_t)(_handler);            \
+		struct weave_packet_sink_ctx *sink_ctx = (struct weave_packet_sink_ctx *)ctx;      \
+		handler_fn((struct net_buf *)ptr, sink_ctx->user_data);                            \
 	}                                                                                          \
 	struct weave_sink _name =                                                                  \
 		WEAVE_SINK_INITIALIZER(_name##_wrapper, (_queue), &_name##_ctx, &weave_packet_ops)

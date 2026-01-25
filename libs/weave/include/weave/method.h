@@ -250,8 +250,8 @@ int weave_method_wait(struct weave_method_context *ctx, k_timeout_t timeout);
  * Called by Weave when a call context arrives at the method's sink.
  * Do not call directly.
  *
- * @param user_data Pointer to weave_method
  * @param ptr Pointer to weave_method_context
+ * @param user_data Pointer to weave_method (const)
  */
 void weave_method_dispatch(void *ptr, void *user_data);
 

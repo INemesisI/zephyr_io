@@ -52,8 +52,8 @@ struct weave_source;
 /**
  * @brief Handler function signature
  *
- * @param user_data User data from sink definition
  * @param ptr Payload pointer
+ * @param user_data User data from sink definition
  */
 typedef void (*weave_handler_t)(void *ptr, void *user_data);
 
@@ -153,7 +153,7 @@ struct weave_event {
  */
 #define WEAVE_SINK_INITIALIZER(_handler, _queue, _user_data, _ops)                                 \
 	{                                                                                          \
-		.handler = (_handler), .user_data = (_user_data), .queue = (_queue),               \
+		.handler = (_handler), .user_data = (void *)(_user_data), .queue = (_queue),       \
 		.ops = (_ops),                                                                     \
 	}
 

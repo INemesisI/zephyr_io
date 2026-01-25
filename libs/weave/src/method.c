@@ -99,7 +99,7 @@ int weave_method_wait(struct weave_method_context *ctx, k_timeout_t timeout)
 
 void weave_method_dispatch(void *ptr, void *user_data)
 {
-	struct weave_method *method = user_data;
+	struct weave_method *method = (struct weave_method *)user_data;
 	struct weave_method_context *ctx = ptr;
 
 	if (!method || !ctx) {

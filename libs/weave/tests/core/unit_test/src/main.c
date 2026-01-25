@@ -106,7 +106,7 @@ static void reset_all_captures(void)
 /* Handler that captures delivery info */
 static void capture_handler(void *ptr, void *user_data)
 {
-	struct test_capture *capture = user_data;
+	struct test_capture *capture = (struct test_capture *)user_data;
 
 	zassert_not_null(capture, "Capture context should not be NULL");
 	zassert_not_null(ptr, "Pointer should not be NULL");
