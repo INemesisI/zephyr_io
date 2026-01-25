@@ -14,12 +14,9 @@ on:
         description: 'Module to test'
         required: false
         type: choice
-        default: 'all'
+        default: 'weave'
         options:
-          - 'all'
-          - 'flow'
           - 'weave'
-          - 'register_mapper'
 
 # Cancel ongoing runs for PRs
 concurrency:
@@ -57,13 +54,11 @@ jobs:
         with:
           result-encoding: string
           script: |
-            const ALL_MODULES = ['flow', 'weave', 'register_mapper'];
+            const ALL_MODULES = ['weave'];
 
             // manual trigger
             if (context.payload.inputs?.module) {
-              return context.payload.inputs.module === 'all'
-                ? ALL_MODULES.join(' ')
-                : context.payload.inputs.module;
+              return context.payload.inputs.module;
             }
 
             // PR - check what changed
@@ -80,9 +75,9 @@ jobs:
                 if (f.filename.startsWith('.github/workflows/'))
                   return ALL_MODULES.join(' ');
 
-                // check module dirs
+                // check module dirs (libs/weave/)
                 ALL_MODULES.forEach(m => {
-                  if (f.filename.startsWith(m + '/')) changed.add(m);
+                  if (f.filename.startsWith('libs/' + m + '/')) changed.add(m);
                 });
               }
 
@@ -98,18 +93,7 @@ jobs:
         run: |
           MODULES="${{ steps.detect.outputs.result }}"
           echo "modules=$MODULES" >> $GITHUB_OUTPUT
-
-          [[ " $MODULES " == *" flow "* ]] && echo "test_flow=true" >> $GITHUB_OUTPUT || echo "test_flow=false" >> $GITHUB_OUTPUT
           [[ " $MODULES " == *" weave "* ]] && echo "test_weave=true" >> $GITHUB_OUTPUT || echo "test_weave=false" >> $GITHUB_OUTPUT
-          [[ " $MODULES " == *" register_mapper "* ]] && echo "test_register_mapper=true" >> $GITHUB_OUTPUT || echo "test_register_mapper=false" >> $GITHUB_OUTPUT
-
-      - name: Test Flow
-        if: steps.modules.outputs.test_flow == 'true'
-        shell: bash
-        run: |
-          cd zephyr_io
-          ./scripts/generate_coverage.sh flow
-          # Files are now in twister-out/coverage-*.{xml,html,txt}
 
       - name: Test Weave
         if: steps.modules.outputs.test_weave == 'true'
@@ -117,15 +101,6 @@ jobs:
         run: |
           cd zephyr_io
           ./scripts/generate_coverage.sh weave
-          # Files are now in twister-out/coverage-*.{xml,html,txt}
-
-      - name: Test Register Mapper
-        if: steps.modules.outputs.test_register_mapper == 'true'
-        shell: bash
-        run: |
-          cd zephyr_io
-          ./scripts/generate_coverage.sh register_mapper
-          # Files are now in twister-out/coverage-*.{xml,html,txt}
 
       - name: Upload Test Results
         if: always() && steps.detect.outputs.result != ''
@@ -167,8 +142,8 @@ jobs:
             let rows = [];
             let failed = false;
 
-            const THRESHOLDS = { flow: 90, weave: 80, register_mapper: 80 };
-            const NAMES = { flow: 'Flow', weave: 'Weave', register_mapper: 'Register Mapper' };
+            const THRESHOLDS = { weave: 80 };
+            const NAMES = { weave: 'Weave' };
 
             for (const mod of modules) {
               const file = `zephyr_io/twister-out/coverage-summary-${mod}.txt`;
@@ -237,8 +212,6 @@ jobs:
             fi
           }
 
-          [ "${{ steps.modules.outputs.test_flow }}" = "true" ] && check_coverage flow 90 || fail=$?
           [ "${{ steps.modules.outputs.test_weave }}" = "true" ] && check_coverage weave 80 || fail=$?
-          [ "${{ steps.modules.outputs.test_register_mapper }}" = "true" ] && check_coverage register_mapper 80 || fail=$?
 
           exit $fail
