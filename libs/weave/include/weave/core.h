@@ -100,8 +100,6 @@ struct weave_sink {
 	void *user_data;
 	/** Message queue (NULL = immediate mode) */
 	struct k_msgq *queue;
-	/** Payload lifecycle operations (for direct send) */
-	const struct weave_payload_ops *ops;
 };
 
 /**
@@ -121,13 +119,15 @@ struct weave_connection {
 /**
  * @brief Event structure for queued delivery
  *
- * Minimal event passed through message queue.
+ * Passed through message queue for deferred processing.
  */
 struct weave_event {
 	/** Target sink */
 	struct weave_sink *sink;
 	/** Payload pointer */
 	void *ptr;
+	/** Payload ops for unref (same ops that did ref) */
+	const struct weave_payload_ops *ops;
 };
 
 /* ============================ Macros ============================ */
@@ -149,12 +149,10 @@ struct weave_event {
  * @param _handler Handler function
  * @param _queue Message queue pointer (NULL/WV_IMMEDIATE for immediate)
  * @param _user_data User data passed to handler
- * @param _ops Signal ops pointer (NULL/WV_NO_OPS if none)
  */
-#define WEAVE_SINK_INITIALIZER(_handler, _queue, _user_data, _ops)                                 \
+#define WEAVE_SINK_INITIALIZER(_handler, _queue, _user_data)                                       \
 	{                                                                                          \
 		.handler = (_handler), .user_data = (void *)(_user_data), .queue = (_queue),       \
-		.ops = (_ops),                                                                     \
 	}
 
 /**
@@ -180,10 +178,9 @@ struct weave_event {
  * @param _handler Handler function
  * @param _queue Message queue (WV_IMMEDIATE for immediate mode, or &queue for queued)
  * @param _user_data User data pointer (NULL if unused)
- * @param _ops Signal ops pointer (WV_NO_OPS if none)
  */
-#define WEAVE_SINK_DEFINE(_name, _handler, _queue, _user_data, _ops)                               \
-	struct weave_sink _name = WEAVE_SINK_INITIALIZER(_handler, _queue, _user_data, _ops)
+#define WEAVE_SINK_DEFINE(_name, _handler, _queue, _user_data)                                     \
+	struct weave_sink _name = WEAVE_SINK_INITIALIZER(_handler, _queue, _user_data)
 
 /**
  * @brief Declare a weave sink (for header files)
@@ -240,15 +237,17 @@ int weave_source_emit(struct weave_source *source, void *ptr, k_timeout_t timeou
  * @brief Send a message directly to a sink
  *
  * Point-to-point delivery bypassing source routing.
- * Uses the sink's ops if provided, otherwise no lifecycle management.
+ * Uses the provided ops for lifecycle management (can be NULL).
  *
  * @param sink Pointer to the sink
  * @param ptr Payload pointer
+ * @param ops Payload operations (NULL for no lifecycle management)
  * @param timeout Maximum time for delivery
  *
  * @return 0 on success, negative errno on failure
  */
-int weave_sink_send(struct weave_sink *sink, void *ptr, k_timeout_t timeout);
+int weave_sink_send(struct weave_sink *sink, void *ptr, const struct weave_payload_ops *ops,
+		    k_timeout_t timeout);
 
 /**
  * @brief Process messages from a queue

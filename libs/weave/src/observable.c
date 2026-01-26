@@ -42,7 +42,7 @@ int weave_observable_publish(struct weave_observable *obs)
 
 	/* Notify owner handler (if defined) */
 	if (obs->owner_sink.handler) {
-		weave_sink_send(&obs->owner_sink, obs, K_NO_WAIT);
+		weave_sink_send(&obs->owner_sink, obs, NULL, K_NO_WAIT);
 	}
 
 	/* Notify external observers */

@@ -16,7 +16,7 @@ LOG_MODULE_REGISTER(weave_core, CONFIG_WEAVE_LOG_LEVEL);
  *
  * Handles ref (with optional filtering) and unref for both immediate and queued modes.
  * For immediate: calls handler then unref.
- * For queued: unref happens later in weave_process_messages.
+ * For queued: stores ops in event, unref happens later in weave_process_messages.
  *
  * @return 0 on success, -EACCES if filtered, -ENOBUFS if queue full
  */
@@ -45,10 +45,11 @@ static int sink_deliver(struct weave_sink *sink, void *ptr, const struct weave_p
 		return 0;
 	}
 
-	/* Queued mode - put event in queue */
+	/* Queued mode - put event in queue with ops for later unref */
 	struct weave_event event = {
 		.sink = sink,
 		.ptr = ptr,
+		.ops = ops,
 	};
 
 	int ret = k_msgq_put(sink->queue, &event, timeout);
@@ -101,13 +102,14 @@ int weave_source_emit(struct weave_source *source, void *ptr, k_timeout_t timeou
 	return delivered;
 }
 
-int weave_sink_send(struct weave_sink *sink, void *ptr, k_timeout_t timeout)
+int weave_sink_send(struct weave_sink *sink, void *ptr, const struct weave_payload_ops *ops,
+		    k_timeout_t timeout)
 {
 	if (!sink) {
 		return -EINVAL;
 	}
 
-	return sink_deliver(sink, ptr, sink->ops, timeout);
+	return sink_deliver(sink, ptr, ops, timeout);
 }
 
 int weave_process_messages(struct k_msgq *queue, k_timeout_t timeout)
@@ -128,8 +130,9 @@ int weave_process_messages(struct k_msgq *queue, k_timeout_t timeout)
 		if (sink && sink->handler) {
 			sink->handler(event.ptr, sink->user_data);
 
-			if (sink->ops && sink->ops->unref) {
-				sink->ops->unref(event.ptr);
+			/* Use event's ops for unref (same ops that did ref) */
+			if (event.ops && event.ops->unref) {
+				event.ops->unref(event.ptr);
 			}
 			processed++;
 		}
@@ -154,11 +157,6 @@ static int weave_init(void)
 
 	STRUCT_SECTION_FOREACH(weave_connection, conn) {
 		if (!conn->source || !conn->sink) {
-			continue;
-		}
-
-		/* If sink has ops, they must match source ops */
-		if (conn->sink->ops != NULL && conn->sink->ops != conn->source->ops) {
 			continue;
 		}
 

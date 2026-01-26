@@ -134,7 +134,7 @@ struct weave_observable {
 		.size = sizeof(_type),                                                             \
 		.sem = Z_SEM_INITIALIZER(_name.sem, 1, 1),                                         \
 		.owner_sink = WEAVE_SINK_INITIALIZER((weave_handler_t)(_handler), (_queue),        \
-						     (_user_data), WV_NO_OPS),                     \
+						     (_user_data)),                                \
 		.validator = (_validator),                                                         \
 	}
 
@@ -150,8 +150,8 @@ struct weave_observable {
  * @param _user_data User data pointer (NULL if unused)
  */
 #define WEAVE_OBSERVER_DEFINE(_name, _handler, _queue, _user_data)                                 \
-	struct weave_sink _name = WEAVE_SINK_INITIALIZER((weave_handler_t)(_handler), (_queue),    \
-							 (_user_data), WV_NO_OPS)
+	struct weave_sink _name =                                                                  \
+		WEAVE_SINK_INITIALIZER((weave_handler_t)(_handler), (_queue), (_user_data))
 
 /**
  * @brief Connect an observer to an observable

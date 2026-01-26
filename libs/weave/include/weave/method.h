@@ -184,8 +184,7 @@ struct weave_method {
  */
 #define WEAVE_METHOD_DEFINE(_name, _handler, _queue, _user_data, _req_type, _res_type)             \
 	struct weave_method _name = {                                                              \
-		.sink = WEAVE_SINK_INITIALIZER(weave_method_dispatch, (_queue), &_name,            \
-					       WV_NO_OPS),                                         \
+		.sink = WEAVE_SINK_INITIALIZER(weave_method_dispatch, (_queue), &_name),           \
 		.handler = (weave_method_handler_t)(_handler),                                     \
 		.user_data = (_user_data),                                                         \
 		.request_size = WEAVE_TYPE_SIZE(_req_type),                                        \

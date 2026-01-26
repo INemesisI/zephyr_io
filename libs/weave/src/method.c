@@ -35,7 +35,7 @@ int weave_method_call_unchecked(struct weave_method *method, const void *request
 	k_sem_init(&ctx.completion, 0, 1);
 
 	/* Send to method's sink - blocks forever for queue admission */
-	int ret = weave_sink_send(&method->sink, &ctx, K_FOREVER);
+	int ret = weave_sink_send(&method->sink, &ctx, NULL, K_FOREVER);
 	if (ret != 0) {
 		LOG_DBG("Queue admission failed: %d", ret);
 		return ret;
@@ -71,7 +71,7 @@ int weave_method_call_async(struct weave_method *method, const void *request, si
 	k_sem_init(&ctx->completion, 0, 1);
 
 	/* Send to method's sink - blocks forever for queue admission */
-	int ret = weave_sink_send(&method->sink, ctx, K_FOREVER);
+	int ret = weave_sink_send(&method->sink, ctx, NULL, K_FOREVER);
 	if (ret != 0) {
 		LOG_DBG("Queue admission failed: %d", ret);
 		return ret;

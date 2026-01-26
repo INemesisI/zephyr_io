@@ -264,12 +264,15 @@ Sometimes you need point-to-point delivery without going through a source.
 
 .. code-block:: c
 
-    /* Send directly to a sink */
-    int ret = weave_sink_send(&target_sink, ptr, K_MSEC(100));
+    /* Send directly to a sink with optional ops for lifecycle management */
+    int ret = weave_sink_send(&target_sink, ptr, ops, K_MSEC(100));
+
+    /* Or without lifecycle management */
+    int ret = weave_sink_send(&target_sink, ptr, NULL, K_MSEC(100));
 
 This bypasses source routing entirely - useful for reply channels or direct
-communication between specific components. The sink's ops (if defined) are
-still used for lifecycle management.
+communication between specific components. The provided ops (if non-NULL) are
+used for lifecycle management.
 
 .. note::
 

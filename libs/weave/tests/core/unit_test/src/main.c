@@ -143,10 +143,10 @@ static struct weave_source sources[4] = {
  * Note: Sinks have ops set for proper lifecycle in weave_process_messages.
  */
 static struct weave_sink sinks[4] = {
-	WEAVE_SINK_INITIALIZER(capture_handler, &test_queue, &captures[0], &test_ops),
-	WEAVE_SINK_INITIALIZER(capture_handler, &test_queue, &captures[1], &test_ops),
-	WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[2], &test_ops),
-	WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[3], &test_ops),
+	WEAVE_SINK_INITIALIZER(capture_handler, &test_queue, &captures[0]),
+	WEAVE_SINK_INITIALIZER(capture_handler, &test_queue, &captures[1]),
+	WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[2]),
+	WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[3]),
 };
 
 /* Connection matrix:
@@ -374,7 +374,7 @@ ZTEST(weave_core_unit_test, test_source_without_ops)
 	/* Create a source without payload ops */
 	struct weave_source no_ops_source = WEAVE_SOURCE_INITIALIZER(no_ops, WV_NO_OPS);
 	struct weave_sink test_sink =
-		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[9], WV_NO_OPS);
+		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[9]);
 
 	/* Manually connect (can't use WEAVE_CONNECT for runtime sources) */
 	static struct weave_connection manual_conn;
@@ -395,9 +395,9 @@ ZTEST(weave_core_unit_test, test_source_without_ops_multi_sink_error)
 	/* Create a source without payload ops */
 	struct weave_source no_ops_source = WEAVE_SOURCE_INITIALIZER(no_ops, WV_NO_OPS);
 	struct weave_sink sink1 =
-		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[8], WV_NO_OPS);
+		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[8]);
 	struct weave_sink sink2 =
-		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[9], WV_NO_OPS);
+		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[9]);
 
 	/* Manually connect two sinks */
 	static struct weave_connection conn1, conn2;
@@ -420,7 +420,7 @@ ZTEST(weave_core_unit_test, test_ops_with_null_ref)
 	/* Source with ops that has NULL ref - tests line 31 branch (ops && ops->ref) */
 	struct weave_source source = WEAVE_SOURCE_INITIALIZER(null_ref, &test_ops_unref_only);
 	struct weave_sink sink =
-		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[8], WV_NO_OPS);
+		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[8]);
 
 	static struct weave_connection conn;
 	conn.source = &source;
@@ -443,7 +443,7 @@ ZTEST(weave_core_unit_test, test_ops_with_null_unref_immediate)
 	/* Source with ops that has NULL unref - tests line 42 branch (ops && ops->unref) */
 	struct weave_source source = WEAVE_SOURCE_INITIALIZER(null_unref, &test_ops_ref_only);
 	struct weave_sink sink =
-		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[8], WV_NO_OPS);
+		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[8]);
 
 	static struct weave_connection conn;
 	conn.source = &source;
@@ -472,10 +472,9 @@ ZTEST(weave_core_unit_test, test_ref_filter_skips_sink)
 	struct weave_source filter_source = WEAVE_SOURCE_INITIALIZER(filter, &test_filter_ops);
 
 	/* Sinks with different user_data - NULL rejected, non-NULL accepted */
-	struct weave_sink sink_reject =
-		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, NULL, WV_NO_OPS);
+	struct weave_sink sink_reject = WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, NULL);
 	struct weave_sink sink_accept =
-		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[9], WV_NO_OPS);
+		WEAVE_SINK_INITIALIZER(capture_handler, WV_IMMEDIATE, &captures[9]);
 
 	static struct weave_connection conn1, conn2;
 	conn1.source = &filter_source;
@@ -562,8 +561,7 @@ ZTEST(weave_core_unit_test, test_queue_overflow_unref_called)
 	k_msgq_purge(&tiny_queue);
 
 	struct weave_source source = WEAVE_SOURCE_INITIALIZER(overflow, &test_ops);
-	struct weave_sink sink =
-		WEAVE_SINK_INITIALIZER(capture_handler, &tiny_queue, &captures[8], &test_ops);
+	struct weave_sink sink = WEAVE_SINK_INITIALIZER(capture_handler, &tiny_queue, &captures[8]);
 
 	static struct weave_connection conn;
 	conn.source = &source;
@@ -600,8 +598,7 @@ ZTEST(weave_core_unit_test, test_queue_overflow_no_unref)
 
 	struct weave_source source =
 		WEAVE_SOURCE_INITIALIZER(overflow_no_unref, &test_ops_ref_only);
-	struct weave_sink sink = WEAVE_SINK_INITIALIZER(capture_handler, &tiny_queue, &captures[8],
-							&test_ops_ref_only);
+	struct weave_sink sink = WEAVE_SINK_INITIALIZER(capture_handler, &tiny_queue, &captures[8]);
 
 	static struct weave_connection conn2;
 	conn2.source = &source;
@@ -634,8 +631,7 @@ ZTEST(weave_core_unit_test, test_queue_overflow_null_ops)
 
 	/* Source without ops can only have one sink */
 	struct weave_source source = WEAVE_SOURCE_INITIALIZER(null_ops, WV_NO_OPS);
-	struct weave_sink sink =
-		WEAVE_SINK_INITIALIZER(capture_handler, &tiny_queue, &captures[8], WV_NO_OPS);
+	struct weave_sink sink = WEAVE_SINK_INITIALIZER(capture_handler, &tiny_queue, &captures[8]);
 
 	static struct weave_connection conn3;
 	conn3.source = &source;
@@ -669,7 +665,7 @@ ZTEST(weave_core_unit_test, test_sink_send_immediate)
 {
 	int test_data = 0xAAAA;
 
-	int ret = weave_sink_send(&sinks[2], &test_data, K_NO_WAIT);
+	int ret = weave_sink_send(&sinks[2], &test_data, NULL, K_NO_WAIT);
 	zassert_equal(ret, 0, "Direct send should succeed");
 	zassert_equal(atomic_get(&captures[2].count), 1, "Handler should be called");
 	zassert_equal(captures[2].last_ptr, &test_data, "Should receive correct ptr");
@@ -679,7 +675,7 @@ ZTEST(weave_core_unit_test, test_sink_send_queued)
 {
 	int test_data = 0xBBBB;
 
-	int ret = weave_sink_send(&sinks[0], &test_data, K_NO_WAIT);
+	int ret = weave_sink_send(&sinks[0], &test_data, NULL, K_NO_WAIT);
 	zassert_equal(ret, 0, "Direct send should succeed");
 	zassert_equal(atomic_get(&captures[0].count), 0, "Handler not called yet");
 
@@ -711,8 +707,7 @@ ZTEST(weave_core_unit_test, test_process_queued_event_null_handler)
 	/* Tests that processing handles event with NULL handler gracefully */
 	k_msgq_purge(&null_handler_queue);
 
-	struct weave_sink bad_sink =
-		WEAVE_SINK_INITIALIZER(NULL, &null_handler_queue, NULL, WV_NO_OPS);
+	struct weave_sink bad_sink = WEAVE_SINK_INITIALIZER(NULL, &null_handler_queue, NULL);
 
 	struct weave_event corrupt_event = {
 		.sink = &bad_sink,
@@ -733,12 +728,12 @@ ZTEST(weave_core_unit_test, test_process_queued_sink_without_ops)
 
 	/* Create sink without ops */
 	struct weave_sink no_ops_sink =
-		WEAVE_SINK_INITIALIZER(capture_handler, &no_ops_queue, &captures[8], WV_NO_OPS);
+		WEAVE_SINK_INITIALIZER(capture_handler, &no_ops_queue, &captures[8]);
 
 	/* Put event via sink_send */
 	reset_signal_counters();
 	int test_data = 0xCCCC;
-	int ret = weave_sink_send(&no_ops_sink, &test_data, K_NO_WAIT);
+	int ret = weave_sink_send(&no_ops_sink, &test_data, NULL, K_NO_WAIT);
 	zassert_equal(ret, 0, "Send should succeed");
 
 	/* Process - should call handler but NOT unref (no ops) */
@@ -754,13 +749,13 @@ ZTEST(weave_core_unit_test, test_process_queued_sink_ops_without_unref)
 	k_msgq_purge(&no_unref_queue);
 
 	/* Create sink with ops that has NULL unref */
-	struct weave_sink sink = WEAVE_SINK_INITIALIZER(capture_handler, &no_unref_queue,
-							&captures[8], &test_ops_ref_only);
+	struct weave_sink sink =
+		WEAVE_SINK_INITIALIZER(capture_handler, &no_unref_queue, &captures[8]);
 
 	/* Put event via sink_send */
 	reset_signal_counters();
 	int test_data = 0xDDDD;
-	int ret = weave_sink_send(&sink, &test_data, K_NO_WAIT);
+	int ret = weave_sink_send(&sink, &test_data, NULL, K_NO_WAIT);
 	zassert_equal(ret, 0, "Send should succeed");
 
 	/* Process - should call handler but NOT unref (NULL unref) */
@@ -791,13 +786,13 @@ ZTEST(weave_core_unit_test, test_emit_null_ptr)
 ZTEST(weave_core_unit_test, test_sink_send_null_sink)
 {
 	int test_data = 0x1234;
-	int ret = weave_sink_send(NULL, &test_data, K_NO_WAIT);
+	int ret = weave_sink_send(NULL, &test_data, NULL, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should reject NULL sink");
 }
 
 ZTEST(weave_core_unit_test, test_sink_send_null_ptr)
 {
-	int ret = weave_sink_send(&sinks[0], NULL, K_NO_WAIT);
+	int ret = weave_sink_send(&sinks[0], NULL, NULL, K_NO_WAIT);
 	zassert_equal(ret, -EINVAL, "Should reject NULL ptr");
 }
 

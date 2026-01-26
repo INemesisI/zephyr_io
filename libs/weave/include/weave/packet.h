@@ -167,8 +167,7 @@ typedef void (*weave_packet_handler_t)(struct net_buf *buf, void *user_data);
 		struct weave_packet_sink_ctx *sink_ctx = (struct weave_packet_sink_ctx *)ctx;      \
 		handler_fn((struct net_buf *)ptr, sink_ctx->user_data);                            \
 	}                                                                                          \
-	struct weave_sink _name =                                                                  \
-		WEAVE_SINK_INITIALIZER(_name##_wrapper, (_queue), &_name##_ctx, &weave_packet_ops)
+	struct weave_sink _name = WEAVE_SINK_INITIALIZER(_name##_wrapper, (_queue), &_name##_ctx)
 
 /**
  * @brief Declare extern packet sink

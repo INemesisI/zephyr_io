@@ -762,8 +762,7 @@ ZTEST(weave_packet_unit_test, test_packet_sink_null_context)
 
 	/* Create a raw sink with NULL user_data but using weave_packet_ops */
 	/* This tests the ctx == NULL branch in packet_buf_ref */
-	struct weave_sink raw_sink =
-		WEAVE_SINK_INITIALIZER(raw_sink_handler, WV_IMMEDIATE, NULL, &weave_packet_ops);
+	struct weave_sink raw_sink = WEAVE_SINK_INITIALIZER(raw_sink_handler, WV_IMMEDIATE, NULL);
 
 	/* Create source and connect */
 	struct weave_source source = WEAVE_SOURCE_INITIALIZER(raw_test, &weave_packet_ops);
@@ -823,7 +822,7 @@ ZTEST(weave_packet_unit_test, test_buffer_without_metadata_space)
 		.user_data = NULL,
 	};
 	struct weave_sink filtered_sink =
-		WEAVE_SINK_INITIALIZER(no_meta_sink_handler, WV_IMMEDIATE, &ctx, &weave_packet_ops);
+		WEAVE_SINK_INITIALIZER(no_meta_sink_handler, WV_IMMEDIATE, &ctx);
 
 	/* Create source and connect */
 	struct weave_source source = WEAVE_SOURCE_INITIALIZER(no_meta_test, &weave_packet_ops);
