@@ -91,6 +91,8 @@ struct weave_observable {
 	struct weave_sink owner_sink;
 	/** Validator function (optional) */
 	weave_observable_validator_t validator;
+	/** Publishing in progress (recursion guard) */
+	bool publishing;
 };
 
 /* ============================ Macros ============================ */

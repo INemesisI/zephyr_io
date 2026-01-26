@@ -38,6 +38,13 @@ int weave_observable_publish(struct weave_observable *obs)
 		return -EINVAL;
 	}
 
+	/* Prevent recursive publish (handler trying to set same observable) */
+	if (obs->publishing) {
+		LOG_WRN("Recursive publish rejected");
+		return -EBUSY;
+	}
+
+	obs->publishing = true;
 	k_sem_give(&obs->sem);
 
 	/* Notify owner handler (if defined) */
@@ -47,6 +54,8 @@ int weave_observable_publish(struct weave_observable *obs)
 
 	/* Notify external observers */
 	int notified = weave_source_emit(&obs->source, obs, K_NO_WAIT);
+
+	obs->publishing = false;
 
 	LOG_DBG("Published: notified=%d observers", notified);
 	return notified;
@@ -71,6 +80,11 @@ int weave_observable_set_unchecked(struct weave_observable *obs, const void *val
 {
 	if (!obs || !value || !obs->value) {
 		return -EINVAL;
+	}
+
+	/* Check if publish is in progress (recursion guard) */
+	if (obs->publishing) {
+		return -EBUSY;
 	}
 
 	/* Validate before claiming */

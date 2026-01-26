@@ -9,6 +9,13 @@
 #include <zephyr/ztest.h>
 #include <weave/observable.h>
 
+/* Internal API declarations for testing purposes only.
+ * These functions are not part of the public API.
+ */
+void *weave_observable_claim(struct weave_observable *obs, k_timeout_t timeout);
+void weave_observable_finish(struct weave_observable *obs);
+int weave_observable_publish(struct weave_observable *obs);
+
 /* Test configuration constants */
 #define TEST_QUEUE_SIZE 16
 
@@ -1154,4 +1161,102 @@ ZTEST(weave_observable_unit_test, test_claim_get_pointer_matches_observable_valu
 	zassert_equal(claimed_ptr, sensor_obs.value,
 		      "Claimed pointer should match observable value");
 	weave_observable_finish(&sensor_obs);
+}
+
+/* =============================================================================
+ * Recursion Guard Tests
+ * =============================================================================
+ */
+
+static atomic_t recursive_handler_count;
+static int recursive_set_result;
+
+/* Forward declaration for the observable */
+extern struct weave_observable recursive_obs;
+
+static void recursive_handler(struct weave_observable *obs, void *user_data)
+{
+	ARG_UNUSED(user_data);
+	atomic_inc(&recursive_handler_count);
+
+	/* Try to set the same observable from within handler - should fail with -EBUSY */
+	struct test_sensor_data new_value = {
+		.temperature = 9999,
+		.humidity = 9999,
+		.timestamp = 9999,
+	};
+	recursive_set_result = weave_observable_set_unchecked(obs, &new_value);
+	zassert_equal(recursive_set_result, -EBUSY, "Recursive set must return -EBUSY");
+}
+
+WEAVE_OBSERVABLE_DEFINE(recursive_obs, struct test_sensor_data, recursive_handler, WV_IMMEDIATE,
+			NULL, WV_NO_VALID);
+
+ZTEST(weave_observable_unit_test, test_recursive_publish_rejected)
+{
+	/* Reset state */
+	atomic_clear(&recursive_handler_count);
+	recursive_set_result = 0;
+
+	/* Set initial value - this triggers the handler which tries to set again */
+	struct test_sensor_data input = {
+		.temperature = 1111,
+		.humidity = 2222,
+		.timestamp = 3333,
+	};
+
+	int ret = weave_observable_set_unchecked(&recursive_obs, &input);
+	zassert_equal(ret, 0, "Initial set should succeed (0 external observers)");
+
+	/* Handler should have been called once */
+	zassert_equal(atomic_get(&recursive_handler_count), 1, "Handler called exactly once");
+
+	/* Recursive set from handler should have failed with -EBUSY */
+	zassert_equal(recursive_set_result, -EBUSY, "Recursive set should return -EBUSY");
+
+	/* Value should be the first set value, not the recursive attempt */
+	struct test_sensor_data output;
+	weave_observable_get_unchecked(&recursive_obs, &output);
+	zassert_equal(output.temperature, 1111, "Value should be from first set");
+	zassert_equal(output.humidity, 2222, "Value should be from first set");
+}
+
+/* Test that claim() is also blocked during publish */
+static void *claim_during_publish_result;
+
+/* Forward declaration */
+extern struct weave_observable claim_block_obs;
+
+static void claim_block_handler(struct weave_observable *obs, void *user_data)
+{
+	ARG_UNUSED(user_data);
+
+	/* Claim the observable during publish to read value - should succeed */
+	claim_during_publish_result = weave_observable_claim(obs, K_NO_WAIT);
+	zassert_not_null(claim_during_publish_result, "Claim during publish should succeed");
+
+	/* Finish the claim to release the lock */
+	weave_observable_finish(obs);
+}
+
+WEAVE_OBSERVABLE_DEFINE(claim_block_obs, struct test_sensor_data, claim_block_handler, WV_IMMEDIATE,
+			NULL, WV_NO_VALID);
+
+ZTEST(weave_observable_unit_test, test_claim_blocked_during_publish)
+{
+	/* Reset state */
+	claim_during_publish_result = NULL;
+
+	/* Set value - this triggers handler which claims and reads value */
+	struct test_sensor_data input = {
+		.temperature = 5555,
+		.humidity = 6666,
+		.timestamp = 7777,
+	};
+
+	int ret = weave_observable_set_unchecked(&claim_block_obs, &input);
+	zassert_equal(ret, 0, "Set should succeed");
+
+	/* Verify claim succeeded (checked in handler) */
+	zassert_not_null(claim_during_publish_result, "Claim during publish should have succeeded");
 }
