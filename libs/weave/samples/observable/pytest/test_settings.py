@@ -13,16 +13,15 @@ def test_settings_get(shell):
     assert any("sample_rate=" in line for line in lines)
 
 
-def test_settings_set(shell, dut):
+def test_settings_set(shell):
     """Verify settings set notifies all observers."""
     lines = shell.exec_command("settings set 500")
 
     assert any("Settings updated: sample_rate=500" in line for line in lines)
     assert any("[IMMEDIATE #" in line and "sample_rate=500" in line for line in lines)
     assert any("[SENSOR #" in line and "500 ms" in line for line in lines)
-
-    # Queued observer fires async
-    dut.readlines_until(regex=r".*\[QUEUED #.*sample_rate=500.*", timeout=1.0)
+    # Queued observer also fires synchronously (processing thread runs immediately)
+    assert any("[QUEUED #" in line and "sample_rate=500" in line for line in lines)
 
 
 def test_settings_validation(shell):
