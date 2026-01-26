@@ -74,8 +74,6 @@ int weave_source_emit(struct weave_source *source, void *ptr, k_timeout_t timeou
 	}
 
 	k_timepoint_t deadline = sys_timepoint_calc(timeout);
-	k_spinlock_key_t key = k_spin_lock(&source->lock);
-
 	int delivered = 0;
 	struct weave_connection *conn;
 
@@ -84,7 +82,6 @@ int weave_source_emit(struct weave_source *source, void *ptr, k_timeout_t timeou
 	SYS_SLIST_FOR_EACH_CONTAINER(&source->sinks, conn, node) {
 		/* Without ops, we can only deliver to one sink (no ref counting) */
 		if (!source->ops && delivered > 0) {
-			k_spin_unlock(&source->lock, key);
 			return -EINVAL;
 		}
 
@@ -94,8 +91,6 @@ int weave_source_emit(struct weave_source *source, void *ptr, k_timeout_t timeou
 			delivered++;
 		}
 	}
-
-	k_spin_unlock(&source->lock, key);
 
 	LOG_DBG("Emitted to %d sinks", delivered);
 

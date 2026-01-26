@@ -83,8 +83,6 @@ struct weave_source {
 	sys_slist_t sinks;
 	/** Payload lifecycle operations (ref/unref/filter) */
 	const struct weave_payload_ops *ops;
-	/** Lock protecting the sink list */
-	struct k_spinlock lock;
 };
 
 /**
@@ -140,7 +138,7 @@ struct weave_event {
  */
 #define WEAVE_SOURCE_INITIALIZER(_name, _ops)                                                      \
 	{                                                                                          \
-		.sinks = SYS_SLIST_STATIC_INIT(&_name.sinks), .ops = (_ops), .lock = {},           \
+		.sinks = SYS_SLIST_STATIC_INIT(&_name.sinks), .ops = (_ops),                       \
 	}
 
 /**
