@@ -68,13 +68,13 @@ Weave provides three communication patterns built on a common Core layer:
 
 .. code-block:: text
 
-    ┌─────────────┬─────────────┬──────────────┐
-    │   Packet    │   Method    │  Observable  │
-    │ (net_buf)   │   (RPC)     │  (pub/sub)   │
-    ├─────────────┴─────────────┴──────────────┤
-    │                  Core                    │
-    │         (sources, sinks, queues)         │
-    └──────────────────────────────────────────┘
+    +-------------+-------------+--------------+
+    |   Packet    |   Method    |  Observable  |
+    | (net_buf)   |   (RPC)     |  (pub/sub)   |
+    +-------------+-------------+--------------+
+    |                  Core                    |
+    |         (sources, sinks, queues)         |
+    +------------------------------------------+
 
 * **Packet**: Zero-copy routing of ``net_buf`` packets with reference counting
 * **Method**: Type-safe RPC with request/response semantics
@@ -99,9 +99,9 @@ all connected sinks receive it:
 
 .. code-block:: text
 
-    Source ──┬──→ Sink A (logger)
-             ├──→ Sink B (display)
-             └──→ Sink C (network)
+    Source --+--> Sink A (logger)
+             +--> Sink B (display)
+             +--> Sink C (network)
 
 This is a one-to-many relationship. A source can have multiple sinks, and a
 sink can be connected to multiple sources (many-to-many when combined).

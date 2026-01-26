@@ -88,19 +88,19 @@ An observable combines several concepts:
 .. code-block:: text
 
     WEAVE_OBSERVABLE_SET(config, &new_value)
-           │
-           ├──→ [validate (if validator defined)]
-           │         └──→ reject? return error, no change
-           │
-           ├──→ [copy value to observable]
-           │
-           ├──→ [call owner handler (if defined)]
-           │
-           └──→ [notify external observers]
-                     │
-                     ├──→ observer1 handler
-                     ├──→ observer2 handler
-                     └──→ observer3 handler
+           |
+           +--> [validate (if validator defined)]
+           |         +--> reject? return error, no change
+           |
+           +--> [copy value to observable]
+           |
+           +--> [call owner handler (if defined)]
+           |
+           +--> [notify external observers]
+                     |
+                     +--> observer1 handler
+                     +--> observer2 handler
+                     +--> observer3 handler
 
 Zero Allocation
 ===============

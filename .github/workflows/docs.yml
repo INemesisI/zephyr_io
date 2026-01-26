@@ -1,0 +1,80 @@
+name: Build and Deploy Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'libs/weave/docs/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'libs/weave/docs/**'
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install sphinx sphinx-rtd-theme
+
+      - name: Install LaTeX dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            latexmk \
+            texlive-xetex \
+            texlive-fonts-recommended \
+            texlive-latex-extra \
+            fonts-roboto \
+            fonts-jetbrains-mono
+
+      - name: Build HTML docs
+        run: |
+          sphinx-build -b html libs/weave/docs build/docs/html
+
+      - name: Build PDF docs
+        run: |
+          sphinx-build -b latex libs/weave/docs build/docs/latex
+          make -C build/docs/latex LATEXMKOPTS="-xelatex"
+          cp build/docs/latex/weave.pdf build/docs/html/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/docs/html
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weave-docs-pdf
+          path: build/docs/latex/weave.pdf
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,30 @@
+% LaTeX documentation title page
+%
+% Based on Zephyr Project styling
+% SPDX-License-Identifier: Apache-2.0
+
+\makeatletter
+\newgeometry{top=3cm,left=0cm,right=0cm,bottom=2.5cm}
+
+\begin{minipage}{2cm}
+    \color{zephyr-blue} \rule{2cm}{1.7cm}
+\end{minipage}
+\hspace{0.5cm}
+\begin{minipage}{15cm}
+    \Huge \textbf{\@title}\\[0.5cm]
+    \LARGE \py@release\releaseinfo
+\end{minipage}
+
+\vspace{21cm}
+
+\begin{flushright}
+    \begin{minipage}{7cm}
+        \large \@author\\\@date
+    \end{minipage}
+    \begin{minipage}{1.5cm}
+        \color{zephyr-blue} \rule{1.5cm}{1.3cm}
+    \end{minipage}
+\end{flushright}
+
+\restoregeometry
+\makeatother
