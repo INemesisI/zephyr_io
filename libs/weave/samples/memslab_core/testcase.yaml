@@ -1,0 +1,18 @@
+tests:
+  sample.weave.memslab_core:
+    harness: console
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - ".*Pool: 2 blocks of 12 bytes.*"
+        - ".*Received: seq=0.*"
+        - ".*Received: seq=4.*"
+        - ".*Sample completed successfully.*"
+    platform_allow: native_sim
+    integration_platforms:
+      - native_sim
+    tags:
+      - weave
+      - memslab
+      - samples
