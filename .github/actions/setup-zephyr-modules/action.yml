@@ -68,6 +68,8 @@ runs:
         source .venv/bin/activate
         pip install --upgrade pip
         pip install -r $ZEPHYR_BASE/scripts/requirements.txt
+        # Install test harness plugin for pytest hardware testing
+        pip install -e scripts/pylib/pytest-test-harness
 
     - name: Install coverage tools
       if: inputs.install-coverage-tools == 'true'
