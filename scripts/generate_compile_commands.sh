@@ -9,17 +9,30 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="$PROJECT_ROOT/twister-out"
 MERGED_OUTPUT="$PROJECT_ROOT/compile_commands.json"
 
-# Module path for weave
-WEAVE_MODULE="$PROJECT_ROOT/libs/weave"
+# Module path for weave (now at project root)
+WEAVE_MODULE="$PROJECT_ROOT"
 
 echo "=== Building all weave samples ==="
 
+# Source venv if it exists
+[ -f "$PROJECT_ROOT/.venv/bin/activate" ] && source "$PROJECT_ROOT/.venv/bin/activate"
+
+# Ensure west is available
+if [ -x "$PROJECT_ROOT/.venv/bin/west" ]; then
+    export PATH="$PROJECT_ROOT/.venv/bin:$PATH"
+elif ! command -v west &> /dev/null; then
+    echo "Error: west is not installed"
+    exit 1
+fi
+
+# Set up environment
+export ZEPHYR_EXTRA_MODULES="$WEAVE_MODULE"
+export PYTHON_PREFER="$PROJECT_ROOT/.venv/bin/python3"
+export CMAKE_PREFIX_PATH="$PROJECT_ROOT/.venv"
+
 # Build all samples with twister (generates compile_commands.json for each)
-ZEPHYR_EXTRA_MODULES="$WEAVE_MODULE" \
-PYTHON_PREFER="$PROJECT_ROOT/.venv/bin/python3" \
-CMAKE_PREFIX_PATH="$PROJECT_ROOT/.venv" \
-  "$PROJECT_ROOT/.venv/bin/python" "$PROJECT_ROOT/zephyr/scripts/twister" \
-  -T "$WEAVE_MODULE/samples" \
+west twister \
+  -T samples \
   -p native_sim \
   -O "$OUTPUT_DIR" \
   --no-clean \

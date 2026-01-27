@@ -12,7 +12,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DOCS_DIR="$PROJECT_ROOT/libs/weave/docs"
+DOCS_DIR="$PROJECT_ROOT/docs"
 BUILD_DIR="$PROJECT_ROOT/build/docs"
 
 FORMAT="${1:-all}"

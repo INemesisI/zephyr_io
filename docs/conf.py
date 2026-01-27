@@ -1,9 +1,10 @@
 # Weave Documentation - Sphinx Configuration
 
+import os
 from pathlib import Path
 
 DOCS_DIR = Path(__file__).parent
-ZEPHYR_BASE = DOCS_DIR.parent.parent.parent / "zephyr"  # libs/weave/docs -> project root
+ZEPHYR_BASE = Path(os.environ.get("ZEPHYR_BASE", DOCS_DIR.parent / "kernel"))
 
 project = 'Weave'
 copyright = '2024'

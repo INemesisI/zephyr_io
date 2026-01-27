@@ -75,9 +75,10 @@ jobs:
                 if (f.filename.startsWith('.github/workflows/'))
                   return ALL_MODULES.join(' ');
 
-                // check module dirs (libs/weave/)
+                // check module dirs (src/, include/, tests/, samples/)
+                const moduleDirs = ['src/', 'include/', 'tests/', 'samples/'];
                 ALL_MODULES.forEach(m => {
-                  if (f.filename.startsWith('libs/' + m + '/')) changed.add(m);
+                  if (moduleDirs.some(d => f.filename.startsWith(d))) changed.add(m);
                 });
               }
 
@@ -98,9 +99,7 @@ jobs:
       - name: Test Weave
         if: steps.modules.outputs.test_weave == 'true'
         shell: bash
-        run: |
-          cd zephyr_io
-          ./scripts/generate_coverage.sh weave
+        run: ./scripts/generate_coverage.sh
 
       - name: Upload Test Results
         if: always() && steps.detect.outputs.result != ''
@@ -109,8 +108,8 @@ jobs:
           name: test-results
           if-no-files-found: ignore
           path: |
-            zephyr_io/twister-out/twister.xml
-            zephyr_io/twister-out/twister.json
+            twister-out/twister.xml
+            twister-out/twister.json
 
       - name: Upload Coverage Reports
         if: always() && steps.detect.outputs.result != ''
@@ -119,16 +118,16 @@ jobs:
           name: coverage-reports
           if-no-files-found: ignore
           path: |
-            zephyr_io/twister-out/coverage-*.xml
-            zephyr_io/twister-out/coverage-*.html
-            zephyr_io/twister-out/coverage-summary-*.txt
+            twister-out/coverage-*.xml
+            twister-out/coverage-*.html
+            twister-out/coverage-summary-*.txt
 
       - name: Publish Test Results
         if: always() && steps.detect.outputs.result != ''
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           check_name: Test Results
-          files: "zephyr_io/**/twister.xml"
+          files: "**/twister.xml"
           comment_mode: off
 
       - name: Comment PR with Coverage
@@ -146,7 +145,7 @@ jobs:
             const NAMES = { weave: 'Weave' };
 
             for (const mod of modules) {
-              const file = `zephyr_io/twister-out/coverage-summary-${mod}.txt`;
+              const file = `twister-out/coverage-summary-${mod}.txt`;
               if (!fs.existsSync(file)) continue;
 
               const text = fs.readFileSync(file, 'utf8');
@@ -195,7 +194,6 @@ jobs:
         if: github.event_name == 'pull_request' && steps.detect.outputs.result != ''
         shell: bash
         run: |
-          cd zephyr_io
           fail=0
 
           check_coverage() {

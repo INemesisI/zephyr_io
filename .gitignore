@@ -9,7 +9,7 @@ twister-out.*/
 ./modules/
 ./bootloader/
 ./tools/
-./zephyr/
+./kernel/
 
 # Python
 .venv/

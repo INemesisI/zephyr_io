@@ -4,11 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'libs/weave/docs/**'
+      - 'docs/**'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
-      - 'libs/weave/docs/**'
+      - 'docs/**'
   workflow_dispatch:  # Allow manual trigger
 
 permissions:
@@ -48,11 +48,11 @@ jobs:
 
       - name: Build HTML docs
         run: |
-          sphinx-build -b html libs/weave/docs build/docs/html
+          sphinx-build -b html docs build/docs/html
 
       - name: Build PDF docs
         run: |
-          sphinx-build -b latex libs/weave/docs build/docs/latex
+          sphinx-build -b latex docs build/docs/latex
           make -C build/docs/latex LATEXMKOPTS="-xelatex"
           cp build/docs/latex/weave.pdf build/docs/html/
 

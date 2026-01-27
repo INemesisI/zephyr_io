@@ -1,9 +1,9 @@
 #!/bin/bash
-# Unified coverage report generator for all modules
-# Usage: ./generate_coverage.sh <module_name> [twister_options]
-# Example: ./generate_coverage.sh weave
-#          ./generate_coverage.sh weave -v
-#          ./generate_coverage.sh weave --filter unit_test
+# Coverage report generator for weave module
+# Usage: ./generate_coverage.sh [twister_options]
+# Example: ./generate_coverage.sh
+#          ./generate_coverage.sh -v
+#          ./generate_coverage.sh --filter unit_test
 
 set -e
 
@@ -30,56 +30,31 @@ elif ! command -v west &> /dev/null; then
     exit 1
 fi
 
-# Parse arguments
-MODULE="${1}"
-shift || true  # Remove module name from arguments, remaining are twister options
+# Parse arguments - all args are twister options now
 TWISTER_ARGS="$@"
 
 # Function to print usage
 usage() {
-    echo "Usage: $0 <module_name> [twister_options]"
+    echo "Usage: $0 [twister_options]"
     echo ""
     echo "Arguments:"
-    echo "  module_name     - Name of the module directory to generate coverage for"
     echo "  twister_options - Any additional options to pass to Twister"
     echo ""
     echo "Examples:"
-    echo "  $0 weave"
-    echo "  $0 weave -v"
-    echo "  $0 weave --filter unit_test"
+    echo "  $0"
+    echo "  $0 -v"
+    echo "  $0 --filter unit_test"
     echo ""
     echo "Note: Requires gcovr to be installed (pip install gcovr)"
     exit 1
 }
 
-# Main execution
-if [ -z "$MODULE" ] || [ "$MODULE" = "-h" ] || [ "$MODULE" = "--help" ] || [ "$MODULE" = "help" ]; then
+# Check for help
+if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ "$1" = "help" ]; then
     usage
 fi
 
-# Check if module directory exists (support both root and libs/ locations)
-MODULE_PATH=""
-if [ -d "$PROJECT_ROOT/$MODULE" ]; then
-    MODULE_PATH="$MODULE"
-elif [ -d "$PROJECT_ROOT/libs/$MODULE" ]; then
-    MODULE_PATH="libs/$MODULE"
-else
-    echo -e "${RED}Error: Module directory '$MODULE' not found${NC}"
-    echo ""
-    echo "Available modules:"
-    for dir in */; do
-        if [ -f "${dir}zephyr/module.yml" ]; then
-            echo "  ${dir%/}"
-        fi
-    done
-    for dir in libs/*/; do
-        if [ -f "${dir}zephyr/module.yml" ]; then
-            echo "  libs/${dir#libs/}"
-            echo "  ${dir#libs/}" | sed 's|/$||'  # Also show short name
-        fi
-    done 2>/dev/null || true
-    exit 1
-fi
+MODULE="weave"
 
 # Check if gcovr is installed
 if ! command -v gcovr &> /dev/null; then
@@ -91,7 +66,7 @@ fi
 echo -e "${YELLOW}=== Generating Coverage Report for $MODULE ===${NC}"
 
 # Set up environment variables (only if not already set by CI)
-export ZEPHYR_EXTRA_MODULES="${ZEPHYR_EXTRA_MODULES:-$PROJECT_ROOT/$MODULE_PATH}"
+export ZEPHYR_EXTRA_MODULES="${ZEPHYR_EXTRA_MODULES:-$PROJECT_ROOT}"
 export PYTHON_PREFER="${PYTHON_PREFER:-$PROJECT_ROOT/.venv/bin/python3}"
 export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-$PROJECT_ROOT/.venv}"
 
@@ -107,7 +82,8 @@ echo -e "${BLUE}Running $MODULE tests with coverage...${NC}"
 west twister \
     --coverage \
     -p native_sim \
-    -T "$MODULE_PATH" \
+    -T tests \
+    -T samples \
     -O "$COVERAGE_DIR" \
     --no-clean \
     $TWISTER_ARGS
@@ -124,15 +100,8 @@ echo -e "${YELLOW}Generating coverage reports for $MODULE...${NC}"
 # Generate coverage reports directly from the test output directory
 cd "$COVERAGE_DIR"
 
-# Determine source filter pattern - check for both src/ and subsys/ directories
-if [ -d "../${MODULE_PATH}/src" ]; then
-    SOURCE_FILTER="../${MODULE_PATH}/src/.*\.c$"
-elif [ -d "../${MODULE_PATH}/subsys" ]; then
-    SOURCE_FILTER="../${MODULE_PATH}/subsys/.*\.c$"
-else
-    # Fallback to any .c file in the module
-    SOURCE_FILTER="../${MODULE_PATH}/.*\.c$"
-fi
+# Source filter pattern - src/ directory at project root
+SOURCE_FILTER="../src/.*\.c$"
 
 echo -e "${BLUE}Using source filter: ${SOURCE_FILTER}${NC}"
 
@@ -145,8 +114,8 @@ echo -e "${BLUE}=== $MODULE Coverage Report (Combined) ===${NC}"
 gcovr \
     --root ../ \
     --filter "${SOURCE_FILTER}" \
-    --exclude-directories "../${MODULE_PATH}/tests" \
-    --exclude-directories "../${MODULE_PATH}/samples" \
+    --exclude-directories "../tests" \
+    --exclude-directories "../samples" \
     --exclude-branches-by-pattern "${LOG_BRANCH_EXCLUDE}" \
     --print-summary \
     --txt-metric branch \
@@ -159,8 +128,8 @@ echo "Generating HTML report..."
 gcovr \
     --root ../ \
     --filter "${SOURCE_FILTER}" \
-    --exclude-directories "../${MODULE_PATH}/tests" \
-    --exclude-directories "../${MODULE_PATH}/samples" \
+    --exclude-directories "../tests" \
+    --exclude-directories "../samples" \
     --exclude-branches-by-pattern "${LOG_BRANCH_EXCLUDE}" \
     --html-details coverage-${MODULE}.html \
     --gcov-ignore-errors=no_working_dir_found \
@@ -171,8 +140,8 @@ echo "Generating XML report..."
 gcovr \
     --root ../ \
     --filter "${SOURCE_FILTER}" \
-    --exclude-directories "../${MODULE_PATH}/tests" \
-    --exclude-directories "../${MODULE_PATH}/samples" \
+    --exclude-directories "../tests" \
+    --exclude-directories "../samples" \
     --exclude-branches-by-pattern "${LOG_BRANCH_EXCLUDE}" \
     --xml coverage-${MODULE}.xml \
     --gcov-ignore-errors=no_working_dir_found \
@@ -183,8 +152,8 @@ echo "Generating coverage summary..."
 gcovr \
     --root ../ \
     --filter "${SOURCE_FILTER}" \
-    --exclude-directories "../${MODULE_PATH}/tests" \
-    --exclude-directories "../${MODULE_PATH}/samples" \
+    --exclude-directories "../tests" \
+    --exclude-directories "../samples" \
     --exclude-branches-by-pattern "${LOG_BRANCH_EXCLUDE}" \
     --print-summary \
     --txt-metric branch \
