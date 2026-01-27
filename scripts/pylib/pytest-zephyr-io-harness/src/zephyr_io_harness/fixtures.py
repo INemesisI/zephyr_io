@@ -81,6 +81,11 @@ def tcp_connection(
     """
     Provide a TCP socket connection to the device.
 
+    Timeout priority (highest to lowest):
+        1. @pytest.mark.tcp_timeout(seconds) on test
+        2. --tcp-timeout CLI option
+        3. Default 10.0 seconds
+
     Args:
         tcp_config: TCP configuration from device fixtures
         request: Pytest fixture request for accessing options
@@ -91,7 +96,11 @@ def tcp_connection(
     Raises:
         ConnectionError: If connection fails
     """
-    timeout = request.config.getoption('--tcp-timeout', default=10.0)
+    marker = request.node.get_closest_marker('tcp_timeout')
+    if marker and marker.args:
+        timeout = float(marker.args[0])
+    else:
+        timeout = request.config.getoption('--tcp-timeout', default=10.0)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)

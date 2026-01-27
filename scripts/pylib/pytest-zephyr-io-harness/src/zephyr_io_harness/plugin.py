@@ -31,4 +31,9 @@ def pytest_configure(config: pytest.Config):
     if config.getoption('help'):
         return
 
+    config.addinivalue_line(
+        'markers',
+        'tcp_timeout(seconds): Override TCP connection timeout for this test'
+    )
+
     logger.debug('Zephyr IO harness plugin configured')
