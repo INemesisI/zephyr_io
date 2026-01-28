@@ -1,0 +1,21 @@
+sample:
+  name: Settings Table API
+  description: |
+    Demonstrates the Settings Table API - a register-table-like settings system
+    with per-field validation, access control, and cross-field validation.
+common:
+  tags:
+    - settings
+    - registers
+  harness: pytest
+  harness_config:
+    pytest_root:
+      - pytest
+tests:
+  sample.settings_table:
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim
+    extra_configs:
+      - arch:posix:CONFIG_NATIVE_UART_0_ON_STDINOUT=y
